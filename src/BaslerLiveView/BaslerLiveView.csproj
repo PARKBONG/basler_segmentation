@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Basler.Pylon.dll is x64-only; force an x64 process so the native pylon libs load. -->
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+
+    <AssemblyName>BaslerLiveView</AssemblyName>
+    <RootNamespace>BaslerLiveView</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Managed wrapper assembly shipped with the SDK checkout. -->
+  <ItemGroup>
+    <Reference Include="Basler.Pylon">
+      <HintPath>..\..\include\pylon\Development\Assemblies\Basler.Pylon\net8.0\x64\Basler.Pylon.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!--
+    pylon is NOT installed system-wide on this machine, so the native runtime
+    (PylonBase / PylonC / transport-layer *_TL.dll producers) must sit next to
+    the executable. Copy the whole Runtime\x64 tree into the output folder;
+    the app base directory is always on the native DLL search path.
+  -->
+  <PropertyGroup>
+    <PylonRuntimeDir>$(MSBuildThisFileDirectory)..\..\include\pylon\Runtime\x64</PylonRuntimeDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(PylonRuntimeDir)\**\*.*">
+      <Link>%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </None>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,13 @@
+#  Build 
+src/**/bin/
+src/**/obj/
+
+# VS Code
+.vs/
+.vscode/
+
+# Claude
+.claude/
+
+include/pylon/Documentation
+include/pylon/Applications
