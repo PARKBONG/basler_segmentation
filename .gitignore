@@ -1,4 +1,4 @@
-#  Build 
+#  Build
 src/**/bin/
 src/**/obj/
 
@@ -9,10 +9,24 @@ src/**/obj/
 # Claude
 .claude/
 
-# Basler Pylon SDK (vendor binaries — do not commit)
-include/pylon/
+# ----------------------------------------------------------------------------
+# Basler Pylon SDK (vendored under include/pylon/)
+# Keep ONLY the minimal set BaslerLiveView needs to build + run (USB3 / GigE):
+#   - Development/Assemblies/Basler.Pylon  (managed reference, compile-time)
+#   - Runtime/x64/*                        (native core + USB/GigE transport)
+# Everything below is large and unused by the app, so it stays out of git
+# (it remains on disk locally for anyone who needs it).
+# ----------------------------------------------------------------------------
+include/pylon/Applications/
+include/pylon/Documentation/
+include/pylon/Development/Samples/
+include/pylon/Runtime/Win32/
+include/pylon/Runtime/CLProtocol/
+include/pylon/Runtime/x64/pylonCXP/
+include/pylon/Runtime/x64/pylonDataProcessingPlugins/
+include/pylon/Runtime/x64/DataProcessingPluginsB/
 
-# YoloDotNet (vendor)
+# YoloDotNet (vendor) — not referenced by the main app
 include/YoloDotNet/
 
 # Large model files
