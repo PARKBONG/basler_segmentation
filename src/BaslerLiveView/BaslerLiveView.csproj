@@ -36,13 +36,33 @@
     <ProjectReference Include="..\..\include\YoloDotNet\YoloDotNet.ExecutionProvider.DirectML\YoloDotNet.ExecutionProvider.DirectML.csproj" />
   </ItemGroup>
 
-  <!-- ONNX segmentation model(s), copied next to the executable so YoloDotNet can load them at runtime. -->
+  <!--
+    ONNX segmentation model. It is NOT committed to this repo (large binary).
+    The default model is sourced from the pinned YoloDotNet submodule's bundled
+    assets and copied next to the executable on every build, so a fresh clone only
+    needs:  git submodule update --init --recursive
+    To use your own model, drop a *.onnx into Models\ (those are copied too, and a
+    Models\yolov11s-seg.onnx there overrides the submodule default).
+  -->
   <ItemGroup>
     <None Include="Models\**\*.onnx">
       <Link>Models\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <Target Name="ProvideSegModelFromSubmodule" AfterTargets="Build">
+    <PropertyGroup>
+      <SegModelSource>$(MSBuildThisFileDirectory)..\..\include\YoloDotNet\test\assets\Models\yolov11s-seg.onnx</SegModelSource>
+      <SegModelDest>$(OutDir)Models\yolov11s-seg.onnx</SegModelDest>
+    </PropertyGroup>
+    <Copy SourceFiles="$(SegModelSource)"
+          DestinationFiles="$(SegModelDest)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(SegModelSource)') And !Exists('$(SegModelDest)')" />
+    <Warning Text="Segmentation model missing: run 'git submodule update --init --recursive' to fetch YoloDotNet (bundles yolov11s-seg.onnx), or place your own in src\BaslerLiveView\Models\."
+             Condition="!Exists('$(SegModelSource)') And !Exists('$(SegModelDest)')" />
+  </Target>
 
   <!--
     pylon is NOT installed system-wide on this machine, so the native runtime

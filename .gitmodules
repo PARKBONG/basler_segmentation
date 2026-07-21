@@ -1,0 +1,3 @@
+[submodule "include/YoloDotNet"]
+	path = include/YoloDotNet
+	url = https://github.com/NickSwardh/YoloDotNet.git
