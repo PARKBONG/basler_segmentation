@@ -9,5 +9,11 @@ src/**/obj/
 # Claude
 .claude/
 
-include/pylon/Documentation
-include/pylon/Applications
+# Basler Pylon SDK (vendor binaries — do not commit)
+include/pylon/
+
+# YoloDotNet (vendor)
+include/YoloDotNet/
+
+# Large model files
+*.onnx
