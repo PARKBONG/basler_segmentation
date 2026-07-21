@@ -42,4 +42,11 @@
     </None>
   </ItemGroup>
 
+  <!-- Ship config\config.xml next to the exe (camera settings, loaded at Open). -->
+  <ItemGroup>
+    <None Update="config\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

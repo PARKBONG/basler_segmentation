@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  BaslerLiveView 카메라 설정.
+  이 파일은 빌드 시 실행 파일 옆 config\config.xml 로 복사됩니다.
+  값을 바꾼 뒤 앱을 다시 Connect 하면 반영됩니다(파일이 없거나 값이 비면 기본값 사용).
+-->
+<Config>
+  <Camera>
+    <!-- 목표 프레임레이트(fps). 카메라 AcquisitionFrameRate 로 고정합니다.
+         이 fps가 실제로 나오도록 노출 시간(ExposureTime)도 프레임 주기(1/FrameRate)
+         안에 들어가게 앱이 자동으로 맞춥니다. 값을 낮추면 노출 여유가 생겨 더 밝아집니다. -->
+    <FrameRate>85</FrameRate>
+  </Camera>
+</Config>

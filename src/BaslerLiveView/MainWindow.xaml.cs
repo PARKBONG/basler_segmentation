@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -18,6 +19,10 @@ public partial class MainWindow : Window
     // FPS measurement.
     private readonly Stopwatch _fpsClock = Stopwatch.StartNew();
     private int _frameCount;
+
+    // Set once the window starts closing so late grab-thread frames stop
+    // touching the (soon-to-be-gone) Dispatcher.
+    private bool _closing;
 
     /// <summary>ComboBox row: wraps an ICameraInfo with a friendly label.</summary>
     private sealed record CameraItem(ICameraInfo Info, string DisplayName);
@@ -120,9 +125,21 @@ public partial class MainWindow : Window
     // Raised on the pylon grab-loop thread → marshal to UI, then blit.
     private void OnFrameReady(int width, int height, byte[] bgra)
     {
+        // Once the window is closing the Dispatcher is going away; don't block
+        // the grab thread on it (that races shutdown and crashes the process).
+        if (_closing || Dispatcher.HasShutdownStarted)
+            return;
+
         // Synchronous Invoke: keeps the grab thread paused until WPF has copied
         // the pixels out of the shared buffer, avoiding tearing/overwrite races.
-        Dispatcher.Invoke(() => RenderFrame(width, height, bgra));
+        try
+        {
+            Dispatcher.Invoke(() => RenderFrame(width, height, bgra));
+        }
+        catch (OperationCanceledException)
+        {
+            // Dispatcher shut down between the check above and the Invoke.
+        }
     }
 
     private void RenderFrame(int width, int height, byte[] bgra)
@@ -147,8 +164,28 @@ public partial class MainWindow : Window
         }
     }
 
-    private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+    // Closing via the window's X does an automatic Stop → Disconnect. The camera
+    // teardown blocks until the grab loop drains, so we hold the close, run it
+    // off the UI thread (keeping the Dispatcher free to release any in-flight
+    // frame callback → no deadlock), then close for real.
+    private async void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
-        _camera.Dispose();
+        if (_closing)
+            return; // cleanup already ran on the first pass; let the window close.
+
+        _closing = true;
+        e.Cancel = true;                    // hold the close until teardown finishes
+        _camera.FrameReady -= OnFrameReady; // stop feeding frames to the UI
+
+        try
+        {
+            await Task.Run(() => _camera.Dispose()); // Stop() + Close() off the UI thread
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("Shutdown teardown failed: " + ex);
+        }
+
+        Close(); // re-enters Window_Closing with _closing == true → window closes
     }
 }
