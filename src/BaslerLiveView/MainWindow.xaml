@@ -16,6 +16,9 @@
                 <Separator Margin="10,0" Width="1" Background="#555"/>
                 <Button x:Name="StartButton" Content="▶ Start" Margin="0" Padding="10,4" Click="Start_Click" IsEnabled="False"/>
                 <Button x:Name="StopButton" Content="■ Stop" Margin="6,0,0,0" Padding="10,4" Click="Stop_Click" IsEnabled="False"/>
+                <Separator Margin="10,0" Width="1" Background="#555"/>
+                <CheckBox x:Name="SegmentCheck" Content="Segmentation" Foreground="#DDD" VerticalAlignment="Center"
+                          Checked="Segment_Toggled" Unchecked="Segment_Toggled"/>
             </StackPanel>
         </Border>
 

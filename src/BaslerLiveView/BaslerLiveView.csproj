@@ -25,6 +25,26 @@
   </ItemGroup>
 
   <!--
+    YoloDotNet (built from source under include\YoloDotNet). The core library plus
+    exactly ONE execution provider — DirectML for vendor-neutral GPU acceleration on
+    Windows (DX12). To switch to NVIDIA CUDA/TensorRT later, replace the DirectML
+    ProjectReference below with the Cuda one and install the CUDA 12.x + cuDNN 9.x
+    runtime. Only one execution provider may be referenced per project.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\include\YoloDotNet\YoloDotNet\YoloDotNet.csproj" />
+    <ProjectReference Include="..\..\include\YoloDotNet\YoloDotNet.ExecutionProvider.DirectML\YoloDotNet.ExecutionProvider.DirectML.csproj" />
+  </ItemGroup>
+
+  <!-- ONNX segmentation model(s), copied next to the executable so YoloDotNet can load them at runtime. -->
+  <ItemGroup>
+    <None Include="Models\**\*.onnx">
+      <Link>Models\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!--
     pylon is NOT installed system-wide on this machine, so the native runtime
     (PylonBase / PylonC / transport-layer *_TL.dll producers) must sit next to
     the executable. Copy the whole Runtime\x64 tree into the output folder;
