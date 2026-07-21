@@ -40,7 +40,7 @@
     ONNX segmentation model. It is NOT committed to this repo (large binary).
     The default model is sourced from the pinned YoloDotNet submodule's bundled
     assets and copied next to the executable on every build, so a fresh clone only
-    needs:  git submodule update --init --recursive
+    needs the submodule fetched (git submodule update, init + recursive).
     To use your own model, drop a *.onnx into Models\ (those are copied too, and a
     Models\yolov11s-seg.onnx there overrides the submodule default).
   -->
@@ -79,6 +79,13 @@
       <Link>%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Visible>false</Visible>
+    </None>
+  </ItemGroup>
+
+  <!-- Ship config\config.xml next to the exe (camera settings, loaded at Open). -->
+  <ItemGroup>
+    <None Update="config\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
 
