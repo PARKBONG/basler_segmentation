@@ -42,3 +42,5 @@ include/pylon/Runtime/x64/DataProcessingPluginsB/
 /train/runs/
 # 다운로드/학습 가중치(base·best·last)
 /train/*.pt
+
+*.pyc

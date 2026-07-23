@@ -19,11 +19,14 @@ out:
 public_val_ratio: 0.1
 
 # Stage2(in-domain) 3분할 — 데이터 위생의 핵심.
+#   ★ 실험(exp) 단위 그룹 분할: images/<실험>/ 폴더를 통째로 배정 → 영상 프레임 누수 차단.
+#   ratio 는 이미지 수 기준 목표(실험 통째 배정이라 근사값).
 local_split:
   val_ratio: 0.2     # best.pt 선택용 (in-domain val)
   test_ratio: 0.1    # 최종 1회 평가용 (학습/선택에 절대 사용 금지)
-  # ↓ 수동 선별: 대표 프레임을 직접 test/val 로 고정 지정. 지정 시 자동분할보다 우선.
-  #   파일명 목록 텍스트(한 줄에 하나, 확장자 무시). 예: ../datasets/mine/splits/test.txt
+  # ↓ 수동 선별: 특정 실험을 직접 test/val 로 고정 지정. 지정 시 자동분할보다 우선.
+  #   ★ 파일명이 아니라 "실험명(폴더명)" 목록 (한 줄에 하나). 예 파일 내용:  exp003
+  #   목록 텍스트 경로. 예: ../datasets/mine/splits/test.txt
   #   지금은 null → 자동 분할(ratio + seed). 나중에 목록만 채우면 그게 우선됨.
   val_list: null
   test_list: null

@@ -7,12 +7,16 @@
     · 공개셋 내부를 public_val_ratio 로 train/val 분할 (학습 메커니즘/모니터링용).
 - Stage2 (out.stage2): role=local(in-domain) 소스만. 도메인 적응 + 검증 + 최종 테스트.
     · train/val/test 3분할. val=best.pt 선택, test=최종 1회 평가(data.yaml 의 test: 키).
-    · 기본은 자동 분할(ratio + seed). local_split.val_list/test_list 지정 시 그쪽이 우선(수동 선별).
+    · ★ 그룹(실험) 단위 분할: images/<실험>/ 하위 폴더를 그룹으로 보고 통째로 배정.
+      영상 프레임이 train/val/test 로 쪼개지는 상관-프레임 누수(leakage)를 원천 차단.
+      (하위 폴더가 없으면 각 이미지가 자기 자신 그룹 = 사실상 랜덤 분할)
+    · 기본은 자동 분할(ratio + seed). val_list/test_list 지정 시 우선(수동 선별, 실험명 기준).
 - 클래스 선택/이름통일은 class_map(이름 기반) → source index 차이에 안전. class_map 에 없는 클래스 줄은 제외.
 
 각 소스 폴더엔 data.yaml (names + train/val 경로) 이 있어야 함.
   · Roboflow export 는 기본 포함.
-  · 로컬은 최소 형식으로 하나 작성:  names: {0: wire}\n  train: images/train
+  · 로컬은 최소 형식으로 하나 작성:  names: {0: wire}\n  train: images
+    (images/ 아래에 실험별 하위폴더 exp001/, exp002/ ... 를 두는 것을 권장)
 
 사용법:
     python merge.py
@@ -65,7 +69,7 @@ def find_split_image_dir(src_dir: Path, dy: dict, key: str):
 
 
 def labels_dir_for(images_dir: Path) -> Path:
-    """.../images/... → .../labels/... (YOLO 관례)."""
+    """.../images/... → .../labels/... (YOLO 관례). 라벨 루트를 반환."""
     parts = list(images_dir.parts)
     for i in range(len(parts) - 1, -1, -1):
         if parts[i] == "images":
@@ -95,7 +99,11 @@ def remap_lines(text: str, src_names: dict, class_map: dict, final_ids: dict) ->
 
 
 def collect_source(src: dict, final_ids: dict) -> list:
-    """소스에서 (src_name, img_path, [remapped lines]) 목록 수집 (대상 클래스가 있는 것만)."""
+    """소스에서 (src_name, group, img_path, [remapped lines]) 수집 (대상 클래스가 있는 것만).
+
+    group = images/ 아래 첫 하위폴더명(실험). 하위폴더가 없으면 파일 stem(각자 그룹).
+    라벨은 images↔labels 관례로 같은 하위경로에서 찾음.
+    """
     src_dir = resolve(src["path"])
     dy_path = src_dir / "data.yaml"
     if not dy_path.exists():
@@ -105,24 +113,29 @@ def collect_source(src: dict, final_ids: dict) -> list:
     class_map = src.get("class_map", {})
 
     items = []
-    seen = set()  # 같은 이미지가 여러 split 에 중복 등록되는 것 방지
+    seen = set()  # 같은 물리 파일이 여러 split 키에 중복 등록되는 것 방지
     for key in ("train", "val", "valid", "test"):
         img_dir = find_split_image_dir(src_dir, dy, key)
         if img_dir is None:
             continue
-        lbl_dir = labels_dir_for(img_dir)
-        for img in sorted(img_dir.iterdir()):
-            if img.suffix.lower() not in IMG_EXTS or img.name in seen:
+        lbl_root = labels_dir_for(img_dir)
+        for img in sorted(img_dir.rglob("*")):   # 하위폴더(실험)까지 재귀 탐색
+            if not img.is_file() or img.suffix.lower() not in IMG_EXTS:
                 continue
-            lbl = lbl_dir / (img.stem + ".txt")
+            ap = str(img.resolve())
+            if ap in seen:
+                continue
+            rel = img.relative_to(img_dir)
+            group = rel.parts[0] if len(rel.parts) > 1 else img.stem
+            lbl = lbl_root / rel.parent / (img.stem + ".txt")
             if not lbl.exists():
                 continue
             lines = remap_lines(lbl.read_text(encoding="utf-8"),
                                 src_names, class_map, final_ids)
             if not lines:
                 continue
-            items.append((src["name"], img, lines))
-            seen.add(img.name)
+            items.append((src["name"], group, img, lines))
+            seen.add(ap)
     return items
 
 
@@ -134,17 +147,18 @@ def clear_dir(d: Path) -> None:
     d.mkdir(parents=True, exist_ok=True)
 
 
-def write_bucket(triples: list, images_dir: Path, labels_dir: Path) -> int:
-    """(src_name, img, lines) 목록을 images/labels 폴더로 복사. 소스명 접두로 충돌 방지."""
-    for src_name, img, lines in triples:
-        stem = f"{src_name}__{img.stem}"
+def write_bucket(items: list, images_dir: Path, labels_dir: Path) -> int:
+    """(src_name, group, img, lines) 목록을 images/labels 로 복사. 실험/소스 접두로 충돌 방지."""
+    for src_name, group, img, lines in items:
+        key = img.stem if group == img.stem else f"{group}__{img.stem}"
+        stem = f"{src_name}__{key}"
         shutil.copyfile(img, images_dir / (stem + img.suffix.lower()))
         (labels_dir / (stem + ".txt")).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return len(triples)
+    return len(items)
 
 
 def write_dataset(out: Path, buckets: dict, names: dict, with_test: bool = False) -> None:
-    """buckets({split: [triples]}) 를 YOLO seg 데이터셋으로 기록 + data.yaml 생성."""
+    """buckets({split: [items]}) 를 YOLO seg 데이터셋으로 기록 + data.yaml 생성."""
     splits = ["train", "val"] + (["test"] if with_test else [])
     for sp in splits:
         clear_dir(out / f"images/{sp}")
@@ -161,22 +175,30 @@ def write_dataset(out: Path, buckets: dict, names: dict, with_test: bool = False
 
 
 def load_name_set(path_str, base: Path):
-    """텍스트 파일(한 줄에 하나) → 이미지 stem 집합. 확장자 무시. 없으면 None."""
+    """텍스트 파일(한 줄에 하나) → 이름 집합(실험명). 확장자 무시. 없으면 None."""
     if not path_str:
         return None
     p = base / path_str if not Path(path_str).is_absolute() else Path(path_str)
     if not p.exists():
         raise FileNotFoundError(f"선별 목록 파일이 없습니다: {p}")
-    stems = set()
+    out = set()
     for line in p.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line:
-            stems.add(Path(line).stem)
-    return stems
+            out.add(Path(line).stem)
+    return out
+
+
+def _groups_of(items: list) -> dict:
+    """items → {group: [items]}."""
+    g = {}
+    for t in items:
+        g.setdefault(t[1], []).append(t)
+    return g
 
 
 def split_public(triples: list, val_ratio: float, rng: random.Random):
-    """공개셋 → (train, val) 2분할. val 은 stage1 학습 메커니즘용."""
+    """공개셋 → (train, val) 2분할. val 은 stage1 학습 메커니즘용 (그룹 무관, 이미지 단위)."""
     idx = list(range(len(triples)))
     rng.shuffle(idx)
     n_val = int(round(len(triples) * val_ratio))
@@ -187,41 +209,41 @@ def split_public(triples: list, val_ratio: float, rng: random.Random):
 
 
 def split_local(triples: list, split_cfg: dict, rng: random.Random) -> dict:
-    """in-domain → {train, val, test} 3분할. 수동 목록(val_list/test_list)이 있으면 우선."""
-    val_set = load_name_set(split_cfg.get("val_list"), HERE)
-    test_set = load_name_set(split_cfg.get("test_list"), HERE)
+    """in-domain → {train, val, test} 3분할. ★ 그룹(실험) 통째로 배정 → 프레임 누수 차단.
+
+    수동 목록(val_list/test_list, 실험명 기준)이 있으면 우선.
+    """
+    groups = _groups_of(triples)
+    val_names = load_name_set(split_cfg.get("val_list"), HERE)
+    test_names = load_name_set(split_cfg.get("test_list"), HERE)
     buckets = {"train": [], "val": [], "test": []}
 
-    if val_set is not None or test_set is not None:
-        # 수동 선별 우선: 목록에 있으면 해당 split, 나머지는 train.
-        vl, tl = (val_set or set()), (test_set or set())
-        for t in triples:
-            stem = t[1].stem
-            if stem in tl:
-                buckets["test"].append(t)
-            elif stem in vl:
-                buckets["val"].append(t)
-            else:
-                buckets["train"].append(t)
+    if val_names is not None or test_names is not None:
+        # 수동 선별 우선: 실험명이 목록에 있으면 해당 split, 나머지는 train.
+        vl, tl = (val_names or set()), (test_names or set())
+        for g, items in groups.items():
+            dest = "test" if g in tl else ("val" if g in vl else "train")
+            buckets[dest].extend(items)
         return buckets
 
-    # 자동 분할 (ratio + seed).
+    # 자동: 그룹을 셔플 후, 목표 이미지 비율에 도달할 때까지 그룹 통째로 배정.
     val_ratio = float(split_cfg.get("val_ratio", 0.2))
     test_ratio = float(split_cfg.get("test_ratio", 0.0))
-    idx = list(range(len(triples)))
-    rng.shuffle(idx)
-    n = len(triples)
-    n_test = int(round(n * test_ratio))
-    n_val = int(round(n * val_ratio))
-    test_idx = set(idx[:n_test])
-    val_idx = set(idx[n_test:n_test + n_val])
-    for i, t in enumerate(triples):
-        if i in test_idx:
-            buckets["test"].append(t)
-        elif i in val_idx:
-            buckets["val"].append(t)
+    total = len(triples)
+    n_test_target = round(total * test_ratio)
+    n_val_target = round(total * val_ratio)
+
+    gnames = list(groups.keys())
+    rng.shuffle(gnames)
+    c_test = c_val = 0
+    for g in gnames:
+        items = groups[g]
+        if c_test < n_test_target:
+            buckets["test"].extend(items); c_test += len(items)
+        elif c_val < n_val_target:
+            buckets["val"].extend(items); c_val += len(items)
         else:
-            buckets["train"].append(t)
+            buckets["train"].extend(items)
     return buckets
 
 
@@ -256,25 +278,27 @@ def main() -> None:
     else:
         print("[merge] stage1: 대상 이미지 0장 (role: public / class_map / 경로 확인)")
 
-    # ── Stage 2: 로컬 in-domain (적응 + 검증 + 테스트) ───────────────────
+    # ── Stage 2: 로컬 in-domain (그룹 단위 3분할) ────────────────────────
     loc_items = []
     for s in local:
         loc_items += collect_source(s, final_ids)
     if loc_items:
         buckets = split_local(loc_items, cfg.get("local_split", {}), rng)
         write_dataset(stage2_out, buckets, final_names, with_test=True)
-        print(f"[merge] stage2(in-domain): train {len(buckets['train'])}, "
-              f"val {len(buckets['val'])}, test {len(buckets['test'])}")
+        for sp in ("train", "val", "test"):
+            n_img = len(buckets[sp])
+            n_grp = len(_groups_of(buckets[sp]))
+            print(f"[merge] stage2 {sp:5s}: {n_img:5d}장 / {n_grp} 실험")
         if not buckets["val"]:
             print("[merge][경고] stage2 val 0장 — local_split.val_ratio 또는 val_list 확인.")
         if not buckets["test"]:
-            print("[merge][경고] stage2 test 0장 — test 평가를 하려면 test_ratio/test_list 설정.")
+            print("[merge][경고] stage2 test 0장 — test_ratio/test_list 를 설정하세요.")
     else:
         print("[merge] stage2: 대상 이미지 0장 (role: local / class_map / 경로 확인)")
 
     print("\n[merge] 완료.")
     print(f"  stage1 → {stage1_out / 'data.yaml'}  (in-domain 미포함)")
-    print(f"  stage2 → {stage2_out / 'data.yaml'}  (val/test = in-domain)")
+    print(f"  stage2 → {stage2_out / 'data.yaml'}  (val/test = in-domain, 실험 단위 분리)")
     print("다음: python train.py --config train_config.stage1.yaml")
 
 
