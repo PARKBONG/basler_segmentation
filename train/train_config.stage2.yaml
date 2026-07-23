@@ -1,0 +1,27 @@
+# Stage 2 (in-domain 적응) 파인튜닝 설정 — train.py --config 로 지정.
+#   python train.py --config train_config.stage2.yaml
+# 데이터: merge.py 산출물 datasets/stage2/data.yaml (train/val/test = in-domain)
+# 목적: Stage1 warm-start 위에 실제 추론 도메인(아크 광/카메라)에 최종 적응.
+#
+# ★ model: 에 Stage1 결과 checkpoint 를 직접 지정하세요 (독립 실행 + 수동 체이닝).
+#   Stage1 을 먼저 돌리고 평가한 뒤, 원하는 가중치 경로를 아래에 기입:
+#     runs/segment/stage1/weights/best.pt   또는   .../last.pt
+
+train:
+  model: runs/segment/stage1/weights/best.pt   # ← Stage1 checkpoint (직접 지정)
+  data: ../datasets/stage2/data.yaml
+  epochs: 60
+  imgsz: 640
+  batch: -1
+  device: "0"
+  workers: 8
+  cache: true                # in-domain 500장 → RAM 상주(가볍게 감당). epoch 가속
+  patience: 20
+  project: runs/segment
+  name: stage2               # runs/segment/stage2
+  optimizer: auto
+  lr0: 0.001                 # Stage1 의 1/10 (catastrophic forgetting 방지)
+  freeze: 10                 # backbone 앞단 고정 (소량 과적합 방지). full 적응 원하면 0
+  cos_lr: true
+  hsv_v: 0.6                 # 밝기(value) 증강 ↑ — WAAM 아크 글레어 대응 (기본 0.4)
+  seed: 0

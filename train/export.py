@@ -17,7 +17,8 @@ from ultralytics import YOLO
 
 HERE = Path(__file__).resolve().parent
 CONFIG_PATH = HERE / "export_config.yaml"
-TRAIN_CONFIG_PATH = HERE / "train_config.yaml"
+# 최종 배포 대상은 Stage2 산출물. imgsz/project/name 을 stage2 설정에서 가져옴.
+TRAIN_CONFIG_PATH = HERE / "train_config.stage2.yaml"
 
 
 def load_yaml(path: Path) -> dict:
@@ -36,16 +37,18 @@ def resolve(path_str: str) -> Path:
 def best_weights_from_train(train_cfg: dict) -> Path:
     """train_config.yaml 의 project/name 에서 best.pt 경로를 유도."""
     project = train_cfg.get("project", "runs/segment")
-    name = train_cfg.get("name", "yolo26s-seg-finetune")
+    name = train_cfg.get("name", "stage2")
     return resolve(project) / name / "weights" / "best.pt"
 
 
 def main() -> None:
     cfg = load_yaml(CONFIG_PATH)
-    # 가중치(best.pt)와 imgsz 는 train_config.yaml 에서 가져옴
+    # 가중치(best.pt)와 imgsz 는 train_config.stage2.yaml 에서 가져옴
     train_cfg = load_yaml(TRAIN_CONFIG_PATH).get("train", {})
 
-    weights = best_weights_from_train(train_cfg)
+    # export_config.yaml 에 weights: 가 있으면 그 경로를 우선 사용 (임의 checkpoint 배포).
+    override = (cfg.get("weights") or "").strip()
+    weights = resolve(override) if override else best_weights_from_train(train_cfg)
     if not weights.exists():
         raise FileNotFoundError(
             f"가중치를 찾을 수 없습니다: {weights}\n"

@@ -2,9 +2,11 @@
 # (명령행 인자 없음. 값은 전부 여기서 수정)
 # 경로는 이 yaml(=train/ 폴더) 기준 상대경로 또는 절대경로.
 
-# 변환할 가중치(best.pt)와 imgsz 는 train_config.yaml 에서 자동으로 가져옵니다.
-#   weights → <train.project>/<train.name>/weights/best.pt
+# 변환할 가중치(best.pt)와 imgsz 는 기본적으로 train_config.stage2.yaml 에서 자동 유도:
+#   weights → <train.project>/<train.name>/weights/best.pt   (기본: runs/segment/stage2/...)
 #   imgsz   → train.imgsz
+# 아래 weights: 를 채우면 임의 checkpoint 를 배포할 수 있습니다 (자동 유도보다 우선).
+weights:                   # 예: runs/segment/stage2/weights/best.pt (비우면 stage2 자동)
 format: onnx
 opset: 12                  # YoloDotNet(ONNX Runtime) 호환. 필요시 조정
 simplify: true
