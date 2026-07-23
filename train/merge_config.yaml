@@ -1,0 +1,36 @@
+# 하이브리드 데이터셋 설정 — download.py 와 merge.py 가 이 파일 하나를 공유.
+#   download.py : roboflow: 블록이 있는 소스를 SDK로 다운로드
+#   merge.py    : 모든 소스를 하나의 YOLO seg 데이터셋으로 병합 → out/
+# 경로는 이 yaml(=train/ 폴더) 기준 상대경로 또는 절대경로.
+
+# 최종 통합 클래스 — index가 최종 class id. class_map의 목적지 이름은 반드시 여기 존재해야 함.
+names:
+  0: wire
+
+sources:
+  # ── 내 로컬 데이터 (비공개, 인도메인 = 귀중) ─────────────────────────
+  #   datasets/mine/ (repo 루트) 에 YOLO seg 데이터 배치 + data.yaml 하나 작성:
+  #     names: {0: wire}
+  #     train: images/train      # (실제 이미지 폴더 위치. val 은 없어도 됨)
+  - name: my_local
+    path: ../datasets/mine
+    class_map:                 # 소스클래스명 → 최종클래스명 (여기 없는 소스 클래스는 제외)
+      wire: wire
+    val_ratio: 0.2             # 20% 를 in-domain 검증셋(val)으로 → 검증은 로컬에서만
+    oversample: 1              # train 강조 배수 (추후 상향 가능)
+
+  # ── 공개 데이터셋 (Roboflow, 보조) — 필요한 만큼 블록 복제해서 추가 ──
+  - name: roboflow_a
+    path: ../datasets/rf_a
+    class_map:
+      cable: wire              # 예: 공개셋의 'cable' 을 최종 'wire' 로 통일
+    val_ratio: 0.0            # 공개셋은 val 에 넣지 않음 (검증 오염 방지 → train 전용)
+    oversample: 1
+    roboflow:                  # 이 블록이 있으면 download.py 가 SDK로 받아옴
+      workspace: ""           # Universe 페이지의 "Download Dataset" 코드 스니펫에서 확인
+      project: ""
+      version: 1
+      format: yolov11         # 세그멘테이션 export 포맷 (yolov8/yolov11 등)
+
+out: ../datasets/merged        # 병합 결과 = 학습(train.py)이 읽는 위치 (repo 루트 datasets/merged)
+seed: 0

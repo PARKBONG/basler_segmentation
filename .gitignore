@@ -31,3 +31,14 @@ include/pylon/Runtime/x64/DataProcessingPluginsB/
 # ONNX models — not committed; the default is auto-copied from the YoloDotNet
 # submodule's assets at build time (see BaslerLiveView.csproj).
 *.onnx
+
+# ----------------------------------------------------------------------------
+# Training workspace (train/) — yolo26s-seg 파인튜닝
+# 코드/설정(train/*.py, *.yaml)만 추적하고, 데이터·산출물은 제외(용량 큼).
+# ----------------------------------------------------------------------------
+# 로컬(mine) + 공개(rf_*) + 병합(merged) 데이터셋
+/datasets/
+# 학습 산출물(체크포인트/로그/plots)
+/train/runs/
+# 다운로드/학습 가중치(base·best·last)
+/train/*.pt
