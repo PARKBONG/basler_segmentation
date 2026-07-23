@@ -49,6 +49,10 @@ public sealed class SegmentationService : IDisposable
         if (!File.Exists(modelPath))
             throw new FileNotFoundException($"Segmentation model not found: {modelPath}", modelPath);
 
+        // The execution backend is decided purely by gpuId in the provider:
+        // >= 0 uses DirectML on that GPU device, < 0 runs on CPU.
+        Backend = gpuId >= 0 ? $"GPU (DirectML dev {gpuId})" : "CPU";
+
         _yolo = new Yolo(new YoloOptions
         {
             ExecutionProvider = new DirectMLExecutionProvider(modelPath, gpuId),
@@ -80,6 +84,9 @@ public sealed class SegmentationService : IDisposable
         };
         _worker.Start();
     }
+
+    /// <summary>Execution backend in use: "GPU (DirectML dev N)" or "CPU".</summary>
+    public string Backend { get; }
 
     /// <summary>Human-readable model description (type, version, input size, ...).</summary>
     public string ModelInfo => _yolo.ModelInfo.ToString() ?? "unknown";

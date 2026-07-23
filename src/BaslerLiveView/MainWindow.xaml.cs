@@ -16,8 +16,10 @@ public partial class MainWindow : Window
     // YOLO segmentation overlay (lazily created when first enabled).
     private SegmentationService? _seg;
     private volatile bool _segEnabled;
+    // Model file name comes from config\config.xml (<Segmentation><Model>),
+    // resolved under Models\ beside the exe. Falls back to the config default.
     private readonly string _modelPath =
-        Path.Combine(AppContext.BaseDirectory, "Models", "yolov11s-seg.onnx");
+        Path.Combine(AppContext.BaseDirectory, "Models", CameraConfig.Load().SegModel);
 
     private WriteableBitmap? _bitmap;
     private int _bmpWidth;
@@ -45,6 +47,21 @@ public partial class MainWindow : Window
         Loaded += (_, _) => RefreshCameras();
     }
 
+    /// <summary>Short one-line description of the configured segmentation model:
+    /// which file is expected (from config) and whether it is actually present.
+    /// The real YOLO version is confirmed on the exe side once segmentation is
+    /// toggled on (see <see cref="Segment_Toggled"/>).</summary>
+    private string DescribeSegModel()
+    {
+        var file = Path.GetFileName(_modelPath);
+        if (File.Exists(_modelPath))
+        {
+            var mb = new FileInfo(_modelPath).Length / (1024.0 * 1024.0);
+            return $"Seg model: {file} ✓ ({mb:0.#} MB) — toggle Segmentation to load & confirm version";
+        }
+        return $"Seg model: {file} ✗ MISSING — place it in Models\\ (see config.xml)";
+    }
+
     private void Refresh_Click(object sender, RoutedEventArgs e) => RefreshCameras();
 
     private void RefreshCameras()
@@ -62,11 +79,11 @@ public partial class MainWindow : Window
             if (CameraCombo.Items.Count > 0)
             {
                 CameraCombo.SelectedIndex = 0;
-                StatusText.Text = $"Found {CameraCombo.Items.Count} camera(s).";
+                StatusText.Text = $"Found {CameraCombo.Items.Count} camera(s).  |  {DescribeSegModel()}";
             }
             else
             {
-                StatusText.Text = "No cameras found. Connect a device, or relaunch with --emulate for the software emulator.";
+                StatusText.Text = $"No cameras found. Connect a device, or relaunch with --emulate for the software emulator.  |  {DescribeSegModel()}";
             }
         }
         catch (Exception ex)
@@ -181,7 +198,7 @@ public partial class MainWindow : Window
                         Dispatcher.BeginInvoke(() => StatusText.Text = "Segmentation error: " + ex.Message);
                 }
                 _segEnabled = true;
-                StatusText.Text = "Segmentation ON — " + _seg.ModelInfo;
+                StatusText.Text = $"Segmentation ON — {_seg.ModelInfo} · {_seg.Backend}  [{Path.GetFileName(_modelPath)}]";
             }
             catch (Exception ex)
             {

@@ -1,0 +1,18 @@
+<Project>
+
+  <!--
+    Repo-wide MSBuild defaults. Auto-imported by every project under this folder,
+    including the vendored YoloDotNet submodule (it has no Directory.Build.props
+    of its own), so we can quiet third-party warnings WITHOUT editing submodule
+    source (which would go dirty and be lost on the next 'git submodule update').
+
+    Scope suppressions to the specific upstream project by name so our own code
+    still surfaces the same warnings.
+  -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'YoloDotNet.ExecutionProvider.DirectML'">
+    <!-- CS0414: _dataTypeSize / _elementDataType are assigned but never read.
+         Harmless upstream leftovers in DirectMLExecutionProvider.cs. -->
+    <NoWarn>$(NoWarn);CS0414</NoWarn>
+  </PropertyGroup>
+
+</Project>

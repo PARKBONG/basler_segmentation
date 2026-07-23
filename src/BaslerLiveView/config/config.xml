@@ -9,6 +9,13 @@
     <!-- 목표 프레임레이트(fps). 카메라 AcquisitionFrameRate 로 고정합니다.
          이 fps가 실제로 나오도록 노출 시간(ExposureTime)도 프레임 주기(1/FrameRate)
          안에 들어가게 앱이 자동으로 맞춥니다. 값을 낮추면 노출 여유가 생겨 더 밝아집니다. -->
-    <FrameRate>50</FrameRate>
+    <FrameRate>10</FrameRate>
   </Camera>
+  <Segmentation>
+    <!-- 사용할 ONNX 세그멘테이션 모델 파일 이름. 실행 파일 옆 Models\ 폴더에서 찾습니다.
+         이 이름의 .onnx 파일을 Models\ 에 넣어두면 됩니다.
+         YoloDotNet 이 모델 버전을 자동 감지하므로 지원되는 YOLO 세그 모델
+         (예: yolo26s-seg.onnx, yolov11s-seg.onnx)이면 그대로 동작합니다. -->
+    <Model>yolo26s-seg.onnx</Model>
+  </Segmentation>
 </Config>

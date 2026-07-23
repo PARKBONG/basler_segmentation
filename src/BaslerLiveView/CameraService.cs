@@ -47,7 +47,7 @@ public sealed class CameraService : IDisposable
     public event Action<Exception>? ErrorOccurred;
 
     public bool IsOpen => _camera?.IsOpen ?? false;
-    public bool IsGrabbing => _camera?.StreamGrabber.IsGrabbing ?? false;
+    public bool IsGrabbing => _camera?.StreamGrabber?.IsGrabbing ?? false;
 
     /// <summary>Enumerate all cameras visible to every installed transport layer.</summary>
     public static List<ICameraInfo> Enumerate() => CameraFinder.Enumerate();
@@ -60,8 +60,9 @@ public sealed class CameraService : IDisposable
         _camera = info != null ? new Camera(info) : new Camera();
 
         // Registers the standard "acquire continuous" node-map setup, applied
-        // automatically once the camera opens.
-        _camera.CameraOpened += Configuration.AcquireContinuous;
+        // automatically once the camera opens. Wrapped in a lambda so the
+        // nullable-annotated event signature matches AcquireContinuous.
+        _camera.CameraOpened += (s, e) => Configuration.AcquireContinuous(s!, e);
         _camera.Open();
 
         // Apply app config (config\config.xml) so acquisition settings are
@@ -69,8 +70,9 @@ public sealed class CameraService : IDisposable
         // camera — the cause of the random 80fps↔3fps swings (stale exposure).
         ApplyConfig(CameraConfig.Load());
 
-        var model = _camera.CameraInfo[CameraInfoKey.ModelName];
-        var serial = _camera.CameraInfo[CameraInfoKey.SerialNumber];
+        var camInfo = _camera!.CameraInfo!;
+        var model = camInfo[CameraInfoKey.ModelName];
+        var serial = camInfo[CameraInfoKey.SerialNumber];
         StatusChanged?.Invoke($"Connected: {model} (SN {serial})");
     }
 
@@ -136,7 +138,7 @@ public sealed class CameraService : IDisposable
         if (_camera == null)
             throw new InvalidOperationException("Open a camera before starting the grab.");
 
-        _camera.StreamGrabber.ImageGrabbed += OnImageGrabbed;
+        _camera.StreamGrabber!.ImageGrabbed += OnImageGrabbed;
 
         // LatestImages = keep only the freshest frames, drop backlog under load.
         // ProvidedByStreamGrabber = pylon runs its own grab-loop thread and
@@ -159,7 +161,7 @@ public sealed class CameraService : IDisposable
 
         DumpStats("stop");   // DIAGNOSTIC: final snapshot before teardown.
 
-        if (_camera.StreamGrabber.IsGrabbing)
+        if (_camera!.StreamGrabber!.IsGrabbing)
             _camera.StreamGrabber.Stop();
 
         _camera.StreamGrabber.ImageGrabbed -= OnImageGrabbed;

@@ -15,6 +15,11 @@ public sealed class CameraConfig
     /// is pinned to this, and exposure is capped to fit inside the frame period.</summary>
     public double FrameRate { get; set; } = 85;
 
+    /// <summary>ONNX segmentation model file name, resolved under the <c>Models\</c>
+    /// folder beside the exe. YoloDotNet auto-detects the model version from the
+    /// file, so any supported YOLO seg model (e.g. yolo26s-seg.onnx) works.</summary>
+    public string SegModel { get; set; } = "yolo26s-seg.onnx";
+
     /// <summary>Default config location: <c>config\config.xml</c> beside the exe.</summary>
     public static string DefaultPath =>
         Path.Combine(AppContext.BaseDirectory, "config", "config.xml");
@@ -29,11 +34,18 @@ public sealed class CameraConfig
         {
             if (!File.Exists(path)) return cfg;
 
-            var cam = XDocument.Load(path).Root?.Element("Camera");
-            if (cam == null) return cfg;
+            var root = XDocument.Load(path).Root;
+            if (root == null) return cfg;
 
-            var fps = (double?)cam.Element("FrameRate");
-            if (fps is > 0) cfg.FrameRate = fps.Value;
+            var cam = root.Element("Camera");
+            if (cam != null)
+            {
+                var fps = (double?)cam.Element("FrameRate");
+                if (fps is > 0) cfg.FrameRate = fps.Value;
+            }
+
+            var model = (string?)root.Element("Segmentation")?.Element("Model");
+            if (!string.IsNullOrWhiteSpace(model)) cfg.SegModel = model.Trim();
         }
         catch
         {
