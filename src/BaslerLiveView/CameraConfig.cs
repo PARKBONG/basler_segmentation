@@ -15,6 +15,19 @@ public sealed class CameraConfig
     /// is pinned to this, and exposure is capped to fit inside the frame period.</summary>
     public double FrameRate { get; set; } = 85;
 
+    /// <summary>Center-crop width/height (pixels) applied as a hardware ROI on the
+    /// sensor. The app reads only this centered region, so frames arrive already
+    /// cropped (less bandwidth, exact size for the 640×640 seg model). Set either
+    /// to 0 to disable cropping and use the sensor's full frame.</summary>
+    public int Width { get; set; } = 640;
+    public int Height { get; set; } = 640;
+
+    /// <summary>Where the crop window sits within the sensor, as a percentage of the
+    /// available travel (0–100). 50 = centered. X: 0 = hard left, 100 = hard right.
+    /// Y: 0 = top, 100 = bottom — so a value below 50 nudges the crop upward.</summary>
+    public double CenterX { get; set; } = 50;
+    public double CenterY { get; set; } = 50;
+
     /// <summary>ONNX segmentation model file name, resolved under the <c>Models\</c>
     /// folder beside the exe. YoloDotNet auto-detects the model version from the
     /// file, so any supported YOLO seg model (e.g. yolo26s-seg.onnx) works.</summary>
@@ -42,6 +55,16 @@ public sealed class CameraConfig
             {
                 var fps = (double?)cam.Element("FrameRate");
                 if (fps is > 0) cfg.FrameRate = fps.Value;
+
+                var w = (int?)cam.Element("Width");
+                if (w is >= 0) cfg.Width = w.Value;
+                var h = (int?)cam.Element("Height");
+                if (h is >= 0) cfg.Height = h.Value;
+
+                var cx = (double?)cam.Element("CenterX");
+                if (cx is >= 0 and <= 100) cfg.CenterX = cx.Value;
+                var cy = (double?)cam.Element("CenterY");
+                if (cy is >= 0 and <= 100) cfg.CenterY = cy.Value;
             }
 
             var model = (string?)root.Element("Segmentation")?.Element("Model");
