@@ -1,270 +1,230 @@
 using System;
 using System.Diagnostics;
-using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using Basler.Pylon;
+using System.Windows.Shapes;
 
 namespace BaslerLiveView;
 
+/// <summary>
+/// The application layer: it owns the one pump loop that reads <see cref="VisionCam"/>
+/// and hands each <see cref="Frame"/> to the display. The camera class knows nothing
+/// about WPF; pulling from a single place also means future consumers (measurement,
+/// logging) can be fed from this same loop without competing for frames.
+/// </summary>
 public partial class MainWindow : Window
 {
-    private readonly CameraService _camera = new();
+    // Acquisition settings live here, not in the UI: they are constructor arguments of
+    // VisionCam and cannot change while streaming, so a control for them would only be
+    // a control for "disconnect, edit, reconnect".
+    private const float Fps = 20;
+    private const bool Segmentation = true;
+    private const int RoiWidth = 640;   // matches the model input → no resize, boxes are sensor pixels
+    private const int RoiHeight = 640;
 
-    // YOLO segmentation overlay (lazily created when first enabled).
-    private SegmentationService? _seg;
-    private volatile bool _segEnabled;
-    // Model file name comes from config\config.xml (<Segmentation><Model>),
-    // resolved under Models\ beside the exe. Falls back to the config default.
-    private readonly string _modelPath =
-        Path.Combine(AppContext.BaseDirectory, "Models", CameraConfig.Load().SegModel);
+    private VisionCam? _cam;
+
+    private CancellationTokenSource? _pumpCts;
+    private Task? _pumpTask;
 
     private WriteableBitmap? _bitmap;
-    private int _bmpWidth;
-    private int _bmpHeight;
+    private int _bmpW;
+    private int _bmpH;
 
-    // FPS measurement.
+    // Display-rate measurement, plus drop accounting straight from the camera.
     private readonly Stopwatch _fpsClock = Stopwatch.StartNew();
-    private int _frameCount;
+    private int _frames;
+    private long _dropped;
 
-    // Set once the window starts closing so late grab-thread frames stop
-    // touching the (soon-to-be-gone) Dispatcher.
-    private bool _closing;
-
-    /// <summary>ComboBox row: wraps an ICameraInfo with a friendly label.</summary>
-    private sealed record CameraItem(ICameraInfo Info, string DisplayName);
-
-    public MainWindow()
-    {
-        InitializeComponent();
-
-        _camera.StatusChanged += msg => Dispatcher.BeginInvoke(() => StatusText.Text = msg);
-        _camera.ErrorOccurred += ex => Dispatcher.BeginInvoke(() => StatusText.Text = "Error: " + ex.Message);
-        _camera.FrameReady += OnFrameReady;
-
-        Loaded += (_, _) => RefreshCameras();
-    }
-
-    /// <summary>Short one-line description of the configured segmentation model:
-    /// which file is expected (from config) and whether it is actually present.
-    /// The real YOLO version is confirmed on the exe side once segmentation is
-    /// toggled on (see <see cref="Segment_Toggled"/>).</summary>
-    private string DescribeSegModel()
-    {
-        var file = Path.GetFileName(_modelPath);
-        if (File.Exists(_modelPath))
-        {
-            var mb = new FileInfo(_modelPath).Length / (1024.0 * 1024.0);
-            return $"Seg model: {file} ✓ ({mb:0.#} MB) — toggle Segmentation to load & confirm version";
-        }
-        return $"Seg model: {file} ✗ MISSING — place it in Models\\ (see config.xml)";
-    }
-
-    private void Refresh_Click(object sender, RoutedEventArgs e) => RefreshCameras();
-
-    private void RefreshCameras()
-    {
-        try
-        {
-            CameraCombo.Items.Clear();
-            foreach (var info in CameraService.Enumerate())
-            {
-                var model = info[CameraInfoKey.ModelName];
-                var serial = info[CameraInfoKey.SerialNumber];
-                CameraCombo.Items.Add(new CameraItem(info, $"{model}  [{serial}]"));
-            }
-
-            if (CameraCombo.Items.Count > 0)
-            {
-                CameraCombo.SelectedIndex = 0;
-                StatusText.Text = $"Found {CameraCombo.Items.Count} camera(s).  |  {DescribeSegModel()}";
-            }
-            else
-            {
-                StatusText.Text = $"No cameras found. Connect a device, or relaunch with --emulate for the software emulator.  |  {DescribeSegModel()}";
-            }
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = "Enumeration failed: " + ex.Message;
-        }
-    }
+    public MainWindow() => InitializeComponent();
 
     private void Connect_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            var item = CameraCombo.SelectedItem as CameraItem;
-            _camera.Open(item?.Info);
+            _cam = new VisionCam(Fps, Segmentation, RoiWidth, RoiHeight);
+            // Model load + DirectML init blocks for a second or two on the first connect.
+            _cam.connect();
 
+            StatusText.Text = "Streaming — " + _cam.Info;
             ConnectButton.IsEnabled = false;
             DisconnectButton.IsEnabled = true;
-            StartButton.IsEnabled = true;
-            CameraCombo.IsEnabled = false;
-            RefreshButton.IsEnabled = false;
+            StartPump();
         }
         catch (Exception ex)
         {
+            _cam?.Dispose();
+            _cam = null;
             StatusText.Text = "Connect failed: " + ex.Message;
         }
     }
 
-    private void Disconnect_Click(object sender, RoutedEventArgs e)
+    private async void Disconnect_Click(object sender, RoutedEventArgs e) => await ShutdownAsync();
+
+    // --- pump --------------------------------------------------------------
+
+    private void StartPump()
     {
-        _camera.Close();
-        ConnectButton.IsEnabled = true;
-        DisconnectButton.IsEnabled = false;
-        StartButton.IsEnabled = false;
-        StopButton.IsEnabled = false;
-        CameraCombo.IsEnabled = true;
-        RefreshButton.IsEnabled = true;
-    }
+        _frames = 0;
+        _dropped = 0;
+        _fpsClock.Restart();
 
-    private void Start_Click(object sender, RoutedEventArgs e)
-    {
-        try
+        _pumpCts = new CancellationTokenSource();
+        var ct = _pumpCts.Token;
+        var cam = _cam!;
+
+        _pumpTask = Task.Run(() =>
         {
-            _fpsClock.Restart();
-            _frameCount = 0;
-            _camera.Start();
-            StartButton.IsEnabled = false;
-            StopButton.IsEnabled = true;
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = "Start failed: " + ex.Message;
-        }
-    }
-
-    private void Stop_Click(object sender, RoutedEventArgs e)
-    {
-        _camera.Stop();
-        StartButton.IsEnabled = true;
-        StopButton.IsEnabled = false;
-        FpsText.Text = "";
-    }
-
-    // Raised on the pylon grab-loop thread → marshal to UI, then blit.
-    private void OnFrameReady(int width, int height, byte[] bgra)
-    {
-        // Once the window is closing the Dispatcher is going away; don't block
-        // the grab thread on it (that races shutdown and crashes the process).
-        if (_closing || Dispatcher.HasShutdownStarted)
-            return;
-
-        var seg = _seg;
-        if (_segEnabled && seg != null)
-        {
-            // Hand the frame to the GPU worker. Submit() copies the pixels out of
-            // the reused buffer immediately, so we can return without blocking the
-            // grab loop; the annotated result arrives later via OnSegmentedFrame.
-            seg.Submit(width, height, bgra);
-            return;
-        }
-
-        // Synchronous Invoke: keeps the grab thread paused until WPF has copied
-        // the pixels out of the shared buffer, avoiding tearing/overwrite races.
-        try
-        {
-            Dispatcher.Invoke(() => RenderFrame(width, height, bgra));
-        }
-        catch (OperationCanceledException)
-        {
-            // Dispatcher shut down between the check above and the Invoke.
-        }
-    }
-
-    // Raised on the segmentation worker thread with a fresh (owned) buffer → safe to
-    // marshal asynchronously.
-    private void OnSegmentedFrame(int width, int height, byte[] bgra)
-    {
-        Dispatcher.BeginInvoke(() => RenderFrame(width, height, bgra));
-    }
-
-    private void Segment_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (SegmentCheck.IsChecked == true)
-        {
-            try
+            while (!ct.IsCancellationRequested)
             {
-                if (_seg == null)
+                Frame? frame;
+                try
                 {
-                    // Model load + DirectML session init blocks briefly (~1-2s).
-                    _seg = new SegmentationService(_modelPath);
-                    _seg.FrameProcessed += OnSegmentedFrame;
-                    _seg.ErrorOccurred += ex =>
-                        Dispatcher.BeginInvoke(() => StatusText.Text = "Segmentation error: " + ex.Message);
+                    // Blocking is fine here — this is not the UI thread. A timeout is a
+                    // "no signal" state, not a failure, so the loop survives it.
+                    frame = cam.get(timeoutMs: 500);
                 }
-                _segEnabled = true;
-                StatusText.Text = $"Segmentation ON — {_seg.ModelInfo} · {_seg.Backend}  [{Path.GetFileName(_modelPath)}]";
+                catch (Exception ex)
+                {
+                    Dispatcher.BeginInvoke(() => StatusText.Text = "Grab failed: " + ex.Message);
+                    return;
+                }
+
+                if (ct.IsCancellationRequested) return;
+
+                if (frame == null)
+                {
+                    Dispatcher.Invoke(() => NoSignalText.Visibility = Visibility.Visible);
+                    continue;
+                }
+
+                // Synchronous Invoke gives the loop back-pressure for free — the next
+                // get() only starts once WPF has finished drawing this frame.
+                try
+                {
+                    Dispatcher.Invoke(() => Render(frame));
+                }
+                catch (OperationCanceledException)
+                {
+                    return; // dispatcher shut down mid-frame
+                }
             }
-            catch (Exception ex)
-            {
-                _segEnabled = false;
-                SegmentCheck.IsChecked = false;
-                StatusText.Text = "Segmentation load failed: " + ex.Message;
-            }
-        }
-        else
-        {
-            _segEnabled = false;
-            StatusText.Text = "Segmentation OFF.";
-        }
+        }, ct);
     }
 
-    private void RenderFrame(int width, int height, byte[] bgra)
+    // --- rendering ---------------------------------------------------------
+
+    private void Render(Frame frame)
     {
-        if (_bitmap == null || _bmpWidth != width || _bmpHeight != height)
+        NoSignalText.Visibility = Visibility.Collapsed;
+
+        if (_bitmap == null || _bmpW != frame.Width || _bmpH != frame.Height)
         {
-            _bitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
-            _bmpWidth = width;
-            _bmpHeight = height;
+            // Gray8 maps one byte per pixel straight from Frame.Gray — no conversion.
+            _bitmap = new WriteableBitmap(frame.Width, frame.Height, 96, 96, PixelFormats.Gray8, null);
+            _bmpW = frame.Width;
+            _bmpH = frame.Height;
             LiveImage.Source = _bitmap;
+            Overlay.Width = frame.Width;
+            Overlay.Height = frame.Height;
         }
 
-        _bitmap.WritePixels(new Int32Rect(0, 0, width, height), bgra, width * 4, 0);
+        // WritePixels takes any rank-1 or rank-2 primitive array, so the [h, w] frame
+        // goes in without flattening; stride is one byte per pixel.
+        _bitmap.WritePixels(new Int32Rect(0, 0, frame.Width, frame.Height),
+                            frame.Gray, frame.Width, 0);
 
-        _frameCount++;
+        DrawOverlay(frame);
+
+        _dropped += frame.Skipped;
+        _frames++;
         if (_fpsClock.ElapsedMilliseconds >= 500)
         {
-            double fps = _frameCount * 1000.0 / _fpsClock.ElapsedMilliseconds;
-            FpsText.Text = $"{fps:F1} fps   {width}×{height}";
-            _frameCount = 0;
+            double fps = _frames * 1000.0 / _fpsClock.ElapsedMilliseconds;
+            RateText.Text = $"{fps:F1} fps   {frame.Width}×{frame.Height}   dropped {_dropped}";
+            _frames = 0;
             _fpsClock.Restart();
         }
     }
 
-    // Closing via the window's X does an automatic Stop → Disconnect. The camera
-    // teardown blocks until the grab loop drains, so we hold the close, run it
-    // off the UI thread (keeping the Dispatcher free to release any in-flight
-    // frame callback → no deadlock), then close for real.
+    // Vector boxes rather than pixels burnt into the image: nothing to composite per
+    // frame, labels stay legible at any zoom, and the camera class never has to know
+    // what the overlay looks like.
+    private void DrawOverlay(Frame frame)
+    {
+        Overlay.Children.Clear();
+
+        foreach (var instance in frame.Instances)
+        {
+            var box = new Rectangle
+            {
+                Width = Math.Max(1, instance.Box.Width),
+                Height = Math.Max(1, instance.Box.Height),
+                Stroke = Brushes.Lime,
+                StrokeThickness = 2,
+            };
+            Canvas.SetLeft(box, instance.Box.X);
+            Canvas.SetTop(box, instance.Box.Y);
+            Overlay.Children.Add(box);
+
+            var label = new TextBlock
+            {
+                Text = $"{instance.Label} {instance.Confidence:P0}",
+                Foreground = Brushes.Black,
+                Background = Brushes.Lime,
+                FontSize = 12,
+                Padding = new Thickness(3, 0, 3, 0),
+            };
+            Canvas.SetLeft(label, instance.Box.X);
+            Canvas.SetTop(label, Math.Max(0, instance.Box.Y - 15));
+            Overlay.Children.Add(label);
+        }
+    }
+
+    // --- teardown ----------------------------------------------------------
+
+    /// <summary>Stop the pump before touching the camera: cancel, wait for the in-flight
+    /// get() to return, only then dispose. Reversing that order would leave get()
+    /// blocking on a closed device.</summary>
+    private async Task ShutdownAsync()
+    {
+        if (_pumpCts != null)
+        {
+            _pumpCts.Cancel();
+            if (_pumpTask != null)
+            {
+                try { await _pumpTask; }
+                catch (OperationCanceledException) { /* expected */ }
+            }
+            _pumpCts.Dispose();
+            _pumpCts = null;
+            _pumpTask = null;
+        }
+
+        if (_cam != null)
+        {
+            await Task.Run(() => _cam.Dispose());
+            _cam = null;
+        }
+
+        ConnectButton.IsEnabled = true;
+        DisconnectButton.IsEnabled = false;
+        NoSignalText.Visibility = Visibility.Collapsed;
+        StatusText.Text = "Disconnected.";
+        RateText.Text = "";
+        Overlay.Children.Clear();
+    }
+
     private async void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
-        if (_closing)
-            return; // cleanup already ran on the first pass; let the window close.
+        if (_cam == null && _pumpTask == null) return; // already clean; let it close
 
-        _closing = true;
-        e.Cancel = true;                    // hold the close until teardown finishes
-        _segEnabled = false;                // stop routing frames to the segmentation worker
-        _camera.FrameReady -= OnFrameReady; // stop feeding frames to the UI
-
-        try
-        {
-            // Stop()/Close() + segmentation worker teardown off the UI thread, so
-            // the Dispatcher stays free to release any in-flight frame callback.
-            await Task.Run(() =>
-            {
-                _camera.Dispose();
-                _seg?.Dispose();
-            });
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine("Shutdown teardown failed: " + ex);
-        }
-
-        Close(); // re-enters Window_Closing with _closing == true → window closes
+        e.Cancel = true;
+        await ShutdownAsync();
+        Close();
     }
 }
