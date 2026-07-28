@@ -97,6 +97,72 @@ public sealed class CameraService : IDisposable
         SetFrameRate(config.FrameRate);
     }
 
+    /// <summary>Crop the sensor to <paramref name="targetW"/>×<paramref name="targetH"/>
+    /// via the hardware ROI (Width/Height/OffsetX/OffsetY). Either dimension ≤ 0
+    /// disables cropping — which still writes the ROI, restoring the full sensor,
+    /// because the camera keeps the previously applied ROI in its power-up set.
+    /// <paramref name="pctX"/>/<paramref name="pctY"/> place the window within the
+    /// available travel (0–100, 50 = centered; a smaller Y nudges it upward).
+    /// Sizes/offsets are clamped to the camera's valid range and rounded down to
+    /// its required increment.</summary>
+    private void SetCenteredRoi(int targetW, int targetH, double pctX, double pctY)
+    {
+        var p = _camera!.Parameters;
+        try
+        {
+            var wNode = p[PLCamera.Width];
+            var hNode = p[PLCamera.Height];
+            var oxNode = p[PLCamera.OffsetX];
+            var oyNode = p[PLCamera.OffsetY];
+
+            // Rounds v down to the nearest increment step, then clamps to [min, max].
+            static long Align(long v, long inc, long min, long max)
+            {
+                v = Math.Clamp(v, min, max);
+                if (inc > 1) v -= (v - min) % inc;
+                return v;
+            }
+
+            // Zero the offsets first so the current offset doesn't cap the max size
+            // we're allowed to request.
+            try { oxNode.SetValue(oxNode.GetMinimum()); } catch { /* offset may be read-only until size set */ }
+            try { oyNode.SetValue(oyNode.GetMinimum()); } catch { }
+
+            // Cropping disabled (0) → request the full sensor, i.e. each node's max.
+            // Never skip the write: the camera persists the ROI from the last run,
+            // so leaving it untouched would silently keep the old crop.
+            bool full = targetW <= 0 || targetH <= 0;
+            long reqW = full ? wNode.GetMaximum() : targetW;
+            long reqH = full ? hNode.GetMaximum() : targetH;
+
+            wNode.SetValue(Align(reqW, wNode.GetIncrement(), wNode.GetMinimum(), wNode.GetMaximum()));
+            hNode.SetValue(Align(reqH, hNode.GetIncrement(), hNode.GetMinimum(), hNode.GetMaximum()));
+
+            // At full size the offset travel is zero; the offsets stay at their
+            // minimum set above, so skip the placement step entirely.
+            if (full) return;
+
+            // With the size set, OffsetX/Y max == sensorMax − size (the full travel).
+            // pct% of that travel places the window: 50% centers it, <50% on Y moves
+            // it toward the top. Clamp the percentage defensively before applying.
+            static long AtPct(double pct, long inc, long min, long max)
+            {
+                double t = Math.Clamp(pct, 0, 100) / 100.0;
+                long v = min + (long)Math.Round((max - min) * t);
+                v = Math.Clamp(v, min, max);
+                if (inc > 1) v -= (v - min) % inc;
+                return v;
+            }
+
+            oxNode.SetValue(AtPct(pctX, oxNode.GetIncrement(), oxNode.GetMinimum(), oxNode.GetMaximum()));
+            oyNode.SetValue(AtPct(pctY, oyNode.GetIncrement(), oyNode.GetMinimum(), oyNode.GetMaximum()));
+        }
+        catch (Exception ex)
+        {
+            StatusChanged?.Invoke("ROI (center crop) set failed: " + ex.Message);
+        }
+    }
+
     /// <summary>Set the acquisition frame rate (fps), clamped to the camera's
     /// valid range. Handles current (AcquisitionFrameRate) and legacy (…Abs) names.</summary>
     private void SetFrameRate(double fps)
@@ -269,6 +335,8 @@ public sealed class CameraService : IDisposable
 
         var parts = new List<string>
         {
+            Get("ROI", () => $"{p[PLCamera.Width].GetValue()}x{p[PLCamera.Height].GetValue()}" +
+                             $"+{p[PLCamera.OffsetX].GetValue()}+{p[PLCamera.OffsetY].GetValue()}"),
             Get("ExposureAuto",         () => p[PLCamera.ExposureAuto].GetValue()),
             Get("ExposureTime(us)",     ExposureUs),
             Get("FrameRateEnable",      () => p[PLCamera.AcquisitionFrameRateEnable].GetValue().ToString()),
