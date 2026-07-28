@@ -20,6 +20,35 @@ public sealed class CameraConfig
     /// file, so any supported YOLO seg model (e.g. yolo26s-seg.onnx) works.</summary>
     public string SegModel { get; set; } = "yolo26s-seg.onnx";
 
+    /// <summary>Run segmentation on a <see cref="CropWidth"/>×<see cref="CropHeight"/>
+    /// window instead of the whole frame. The live view always shows the full frame
+    /// and just outlines this window.</summary>
+    public bool CropEnabled { get; set; } = true;
+
+    /// <summary>Crop size in pixels (training capture size, e.g. 640 or 960).</summary>
+    public int CropWidth { get; set; } = 640;
+    public int CropHeight { get; set; } = 640;
+
+    /// <summary>Crop window position per axis, 0–100% (0 = left/top, 100 = right/bottom,
+    /// 50 = centered). Adjustable live from the toolbar sliders.</summary>
+    public double CropCenterX { get; set; } = 50;
+    public double CropCenterY { get; set; } = 50;
+
+    /// <summary>Where the Record button writes PNGs (full sensor resolution, uncropped).
+    /// Relative paths are anchored at the repo root (see
+    /// <see cref="FrameRecorder.ResolveDirectory"/>). The default is the <c>raw</c>
+    /// source that finetuner/preprocess.py reads.</summary>
+    public string RecordDir { get; set; } = "datasets/raw/images/train";
+
+    /// <summary>How many frames per second Record saves. Consecutive grabs are nearly
+    /// identical, so the grab stream is sampled down to something worth labelling.
+    /// 0 saves every grabbed frame.</summary>
+    public double RecordFps { get; set; } = 2;
+
+    /// <summary>Frames buffered while the encoder catches up; beyond this the newest
+    /// frames are dropped instead of blocking the grab loop.</summary>
+    public int RecordQueueCapacity { get; set; } = 120;
+
     /// <summary>Default config location: <c>config\config.xml</c> beside the exe.</summary>
     public static string DefaultPath =>
         Path.Combine(AppContext.BaseDirectory, "config", "config.xml");
@@ -46,6 +75,39 @@ public sealed class CameraConfig
 
             var model = (string?)root.Element("Segmentation")?.Element("Model");
             if (!string.IsNullOrWhiteSpace(model)) cfg.SegModel = model.Trim();
+
+            var crop = root.Element("Crop");
+            if (crop != null)
+            {
+                var enabled = (bool?)crop.Element("Enabled");
+                if (enabled.HasValue) cfg.CropEnabled = enabled.Value;
+
+                var w = (int?)crop.Element("Width");
+                if (w is > 0) cfg.CropWidth = w.Value;
+
+                var h = (int?)crop.Element("Height");
+                if (h is > 0) cfg.CropHeight = h.Value;
+
+                var cx = (double?)crop.Element("CenterX");
+                if (cx is >= 0 and <= 100) cfg.CropCenterX = cx.Value;
+
+                var cy = (double?)crop.Element("CenterY");
+                if (cy is >= 0 and <= 100) cfg.CropCenterY = cy.Value;
+            }
+
+            var rec = root.Element("Recording");
+            if (rec != null)
+            {
+                var dir = (string?)rec.Element("Directory");
+                if (!string.IsNullOrWhiteSpace(dir)) cfg.RecordDir = dir.Trim();
+
+                // 0 is meaningful here (= save every frame), so accept it too.
+                var saveFps = (double?)rec.Element("Fps");
+                if (saveFps is >= 0) cfg.RecordFps = saveFps.Value;
+
+                var cap = (int?)rec.Element("QueueCapacity");
+                if (cap is > 0) cfg.RecordQueueCapacity = cap.Value;
+            }
         }
         catch
         {

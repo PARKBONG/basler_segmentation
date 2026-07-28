@@ -10,6 +10,7 @@
 
 ultralytics>=8.3.0
 pyyaml>=6.0            # *_config.yaml 로드 (ultralytics 의존성이지만 명시)
+pillow>=10.0           # 크롭/리사이즈/미리보기 — preprocess.py, selftest.py
 roboflow>=1.1.0       # (선택) 공개 데이터셋 SDK 다운로드용 — download.py
 onnx>=1.16.0
 onnxruntime-gpu>=1.18.0   # export 검증용(선택). CPU만이면 onnxruntime 로 교체

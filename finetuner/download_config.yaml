@@ -1,0 +1,19 @@
+# 공개 데이터셋 획득 설정 — download.py 전용.
+# (명령행 인자 없음. 값은 전부 여기서 수정)
+# 경로는 이 yaml(=finetuner/ 폴더) 기준 상대경로 또는 절대경로.
+#
+# 여기는 "어디서 받아서 어디에 둘지"만 정합니다. 클래스 매핑 · train/val 비율 ·
+# 크롭 같은 데이터셋 구성은 preprocess_config.yaml 이 소유합니다.
+# 두 파일이 공유하는 건 아래 path 문자열 하나뿐입니다 (같은 값을 써야 함).
+#
+# API 키는 여기 적지 말고 환경변수 ROBOFLOW_API_KEY 로 넘기세요.
+
+sources:
+  # 필요한 만큼 블록을 복제해서 추가.
+  - name: rf_a
+    path: ../datasets/rf_a       # 받은 파일이 풀릴 위치 (preprocess 가 이 경로를 참조)
+    roboflow:
+      workspace: ""              # Universe 페이지의 "Download Dataset" 코드 스니펫에서 확인
+      project: ""
+      version: 1
+      format: yolov11            # 세그멘테이션 export 포맷 (yolov8/yolov11 등)

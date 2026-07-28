@@ -33,12 +33,15 @@ include/pylon/Runtime/x64/DataProcessingPluginsB/
 *.onnx
 
 # ----------------------------------------------------------------------------
-# Training workspace (train/) — yolo26s-seg 파인튜닝
-# 코드/설정(train/*.py, *.yaml)만 추적하고, 데이터·산출물은 제외(용량 큼).
+# Training workspace (finetuner/) — yolo26s-seg 파인튜닝
+# 코드/설정(finetuner/*.py, *.yaml)만 추적하고, 데이터·산출물은 제외(용량 큼).
 # ----------------------------------------------------------------------------
-# 로컬(mine) + 공개(rf_*) + 병합(merged) 데이터셋
+# 원본(raw) + 로컬(mine) + 공개(rf_*) + 전처리 결과(processed) 데이터셋
 /datasets/
-# 학습 산출물(체크포인트/로그/plots)
-/train/runs/
+# 학습 산출물(체크포인트/로그/plots) + 증강 미리보기(runs/preview)
+/finetuner/runs/
 # 다운로드/학습 가중치(base·best·last)
-/train/*.pt
+/finetuner/*.pt
+# Python 바이트코드
+__pycache__/
+*.py[cod]

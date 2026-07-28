@@ -6,19 +6,53 @@
     <DockPanel>
         <!-- Toolbar -->
         <Border DockPanel.Dock="Top" Background="#2D2D30" Padding="8">
-            <StackPanel Orientation="Horizontal">
-                <TextBlock Text="Camera:" Foreground="#DDD" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                <ComboBox x:Name="CameraCombo" Width="320" VerticalAlignment="Center"
-                          DisplayMemberPath="DisplayName"/>
-                <Button x:Name="RefreshButton" Content="Refresh" Margin="6,0,0,0" Padding="10,4" Click="Refresh_Click"/>
-                <Button x:Name="ConnectButton" Content="Connect" Margin="12,0,0,0" Padding="10,4" Click="Connect_Click"/>
-                <Button x:Name="DisconnectButton" Content="Disconnect" Margin="6,0,0,0" Padding="10,4" Click="Disconnect_Click" IsEnabled="False"/>
-                <Separator Margin="10,0" Width="1" Background="#555"/>
-                <Button x:Name="StartButton" Content="▶ Start" Margin="0" Padding="10,4" Click="Start_Click" IsEnabled="False"/>
-                <Button x:Name="StopButton" Content="■ Stop" Margin="6,0,0,0" Padding="10,4" Click="Stop_Click" IsEnabled="False"/>
-                <Separator Margin="10,0" Width="1" Background="#555"/>
-                <CheckBox x:Name="SegmentCheck" Content="Segmentation" Foreground="#DDD" VerticalAlignment="Center"
-                          Checked="Segment_Toggled" Unchecked="Segment_Toggled"/>
+            <StackPanel>
+                <!-- Row 1: camera + acquisition -->
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Camera:" Foreground="#DDD" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <ComboBox x:Name="CameraCombo" Width="320" VerticalAlignment="Center"
+                              DisplayMemberPath="DisplayName"/>
+                    <Button x:Name="RefreshButton" Content="Refresh" Margin="6,0,0,0" Padding="10,4" Click="Refresh_Click"/>
+                    <Button x:Name="ConnectButton" Content="Connect" Margin="12,0,0,0" Padding="10,4" Click="Connect_Click"/>
+                    <Button x:Name="DisconnectButton" Content="Disconnect" Margin="6,0,0,0" Padding="10,4" Click="Disconnect_Click" IsEnabled="False"/>
+                    <Separator Margin="10,0" Width="1" Background="#555"/>
+                    <Button x:Name="StartButton" Content="▶ Start" Margin="0" Padding="10,4" Click="Start_Click" IsEnabled="False"/>
+                    <Button x:Name="StopButton" Content="■ Stop" Margin="6,0,0,0" Padding="10,4" Click="Stop_Click" IsEnabled="False"/>
+                    <Separator Margin="10,0" Width="1" Background="#555"/>
+                    <CheckBox x:Name="SegmentCheck" Content="Segmentation" Foreground="#DDD" VerticalAlignment="Center"
+                              Checked="Segment_Toggled" Unchecked="Segment_Toggled"/>
+                    <Separator Margin="10,0" Width="1" Background="#555"/>
+                    <ToggleButton x:Name="RecordButton" Padding="10,4" Foreground="#F55" FontWeight="Bold"
+                                  Content="● REC" ToolTip="Save the cropped frames as PNGs for training"
+                                  Checked="Record_Toggled" Unchecked="Record_Toggled"/>
+                </StackPanel>
+
+                <!-- Row 2: training-capture crop. 0% = left/top edge, 100% = right/bottom edge.
+                     The view stays full-frame; this only moves the outlined window. -->
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <CheckBox x:Name="CropCheck" Content="Crop" Foreground="#DDD" VerticalAlignment="Center"
+                              ToolTip="Outline the training/segmentation window on the live view"
+                              Checked="Crop_Changed" Unchecked="Crop_Changed"/>
+                    <TextBox x:Name="CropWidthBox" Width="52" Margin="8,0,0,0" VerticalAlignment="Center"
+                             TextAlignment="Right" TextChanged="CropText_Changed"/>
+                    <TextBlock Text="×" Foreground="#DDD" VerticalAlignment="Center" Margin="4,0"/>
+                    <TextBox x:Name="CropHeightBox" Width="52" VerticalAlignment="Center"
+                             TextAlignment="Right" TextChanged="CropText_Changed"/>
+                    <TextBlock Text="px" Foreground="#888" VerticalAlignment="Center" Margin="4,0,0,0"/>
+
+                    <TextBlock Text="↔" Foreground="#DDD" VerticalAlignment="Center" Margin="16,0,4,0"/>
+                    <Slider x:Name="CropXSlider" Width="150" Minimum="0" Maximum="100" VerticalAlignment="Center"
+                            ValueChanged="CropSlider_Changed"/>
+                    <TextBlock x:Name="CropXText" Foreground="#DDD" VerticalAlignment="Center" Width="42"/>
+
+                    <TextBlock Text="↕" Foreground="#DDD" VerticalAlignment="Center" Margin="8,0,4,0"/>
+                    <Slider x:Name="CropYSlider" Width="150" Minimum="0" Maximum="100" VerticalAlignment="Center"
+                            ValueChanged="CropSlider_Changed"/>
+                    <TextBlock x:Name="CropYText" Foreground="#DDD" VerticalAlignment="Center" Width="42"/>
+
+                    <Button x:Name="CropCenterButton" Content="Center" Margin="8,0,0,0" Padding="8,2"
+                            Click="CropCenter_Click" ToolTip="Reset both axes to 50%"/>
+                </StackPanel>
             </StackPanel>
         </Border>
 
@@ -26,13 +60,25 @@
         <Border DockPanel.Dock="Bottom" Background="#007ACC" Padding="8,4">
             <DockPanel>
                 <TextBlock x:Name="FpsText" DockPanel.Dock="Right" Foreground="White" Text=""/>
+                <TextBlock x:Name="RecText" DockPanel.Dock="Right" Foreground="White" Margin="0,0,16,0" Text=""/>
                 <TextBlock x:Name="StatusText" Foreground="White" Text="Ready. Click Refresh to enumerate cameras."/>
             </DockPanel>
         </Border>
 
-        <!-- Live image -->
-        <Grid Background="Black">
+        <!-- Live image: always the full sensor frame, so the operator can see what
+             falls outside the framing. The crop window is drawn on top as a
+             rectangle rather than actually cutting the view. -->
+        <Grid x:Name="ViewHost" Background="Black" ClipToBounds="True" SizeChanged="ViewHost_SizeChanged">
             <Image x:Name="LiveImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="LowQuality"/>
+            <Canvas x:Name="OverlayCanvas" IsHitTestVisible="False">
+                <!-- Dark under-stroke first, so the bright outline stays readable on
+                     both blown-out and near-black backgrounds. -->
+                <Rectangle x:Name="CropRectShadow" Stroke="#B0000000" StrokeThickness="4" Visibility="Collapsed"/>
+                <Rectangle x:Name="CropRectLine" Stroke="#FF3B30" StrokeThickness="2" Visibility="Collapsed"/>
+                <Border x:Name="CropRectLabelBox" Background="#B0000000" Padding="4,1" Visibility="Collapsed">
+                    <TextBlock x:Name="CropRectLabel" Foreground="#FF6B60" FontSize="11" FontWeight="Bold"/>
+                </Border>
+            </Canvas>
         </Grid>
     </DockPanel>
 </Window>

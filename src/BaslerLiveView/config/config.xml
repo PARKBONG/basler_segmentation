@@ -9,7 +9,7 @@
     <!-- 목표 프레임레이트(fps). 카메라 AcquisitionFrameRate 로 고정합니다.
          이 fps가 실제로 나오도록 노출 시간(ExposureTime)도 프레임 주기(1/FrameRate)
          안에 들어가게 앱이 자동으로 맞춥니다. 값을 낮추면 노출 여유가 생겨 더 밝아집니다. -->
-    <FrameRate>10</FrameRate>
+    <FrameRate>40</FrameRate>
   </Camera>
   <Segmentation>
     <!-- 사용할 ONNX 세그멘테이션 모델 파일 이름. 실행 파일 옆 Models\ 폴더에서 찾습니다.
@@ -18,4 +18,39 @@
          (예: yolo26s-seg.onnx, yolov11s-seg.onnx)이면 그대로 동작합니다. -->
     <Model>yolo26s-seg.onnx</Model>
   </Segmentation>
+  <Crop>
+    <!-- 크롭 영역. 화면은 항상 '풀 프레임'을 보여주고, 이 영역은 그 위에 빨간 네모로
+         표시만 됩니다(잘라내지 않음). 실제로 잘려서 쓰이는 곳은 두 군데:
+           1) 세그멘테이션 입력 — 모델이 학습 때와 같은 화각을 보도록. 결과 오버레이는
+              풀 프레임의 네모 안쪽에 다시 얹어 그립니다.
+           2) finetuner/preprocess.py — REC 로 저장한 풀사이즈 원본을 라벨과 함께 크롭.
+         학습 imgsz(train_config.yaml)와 같은 크기로 두면 됩니다.
+         여기서 슬라이더로 찾은 위치(%)를 finetuner/preprocess_config.yaml 의
+         crop.center_x/center_y 에 그대로 옮겨 적으면 됩니다(같은 0~100% 규약). -->
+    <Enabled>true</Enabled>
+    <Width>640</Width>
+    <Height>640</Height>
+    <!-- 크롭 창의 위치(%). 0 = 왼쪽/위 끝, 100 = 오른쪽/아래 끝, 50 = 중앙.
+         앱 실행 중에는 툴바 슬라이더로 바로 조절할 수 있고, 여기 값은 시작값입니다. -->
+    <CenterX>50</CenterX>
+    <CenterY>50</CenterY>
+  </Crop>
+  <Recording>
+    <!-- Record 버튼이 PNG를 저장할 폴더. 저장되는 건 크롭 전 '풀사이즈 원본'입니다
+         (크롭은 라벨까지 같이 잘라야 하므로 finetuner/preprocess.py 가 담당).
+         상대경로는 저장소 루트(= .git 이 있는 폴더) 기준으로 풀립니다.
+             datasets/raw/images/train
+         라벨은 datasets/raw/labels/train 에 넣고, datasets/raw/data.yaml 을 한 줄짜리로
+         만들어 두면 preprocess.py 의 raw 소스로 그대로 읽힙니다:
+             names: {0: wire}
+             train: images/train
+         절대경로를 적으면 그 경로를 그대로 사용합니다. -->
+    <Directory>datasets/raw/images/train</Directory>
+    <!-- 초당 저장 장수. 연속된 프레임은 거의 똑같아서 전부 저장해봐야 디스크와 라벨링
+         시간만 먹습니다. 그랩은 <FrameRate> 그대로 돌고, 저장만 이 주기로 샘플링합니다.
+         2 = 0.5초에 1장. 0 으로 두면 그랩되는 모든 프레임을 저장합니다. -->
+    <Fps>2</Fps>
+    <!-- 인코딩이 밀릴 때 버퍼링할 프레임 수. 넘치면 최신 프레임을 버립니다(그랩은 안 막힘). -->
+    <QueueCapacity>120</QueueCapacity>
+  </Recording>
 </Config>

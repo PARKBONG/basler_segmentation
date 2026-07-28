@@ -1,10 +1,16 @@
-# yolo26s-seg 파인튜닝 설정 — train.py 전용.
+# yolo26s-seg 파인튜닝 + export 설정 — train.py 전용.
 # (명령행 인자 없음. 값은 전부 여기서 수정)
-# 데이터셋 정의는 merge_config.yaml 이 소유하며, merge.py 가 만든 결과를 data 로 가리킵니다.
+# 데이터셋 정의는 preprocess_config.yaml 이 소유하며, preprocess.py 산출물을 data 로 가리킵니다.
+
+# 무엇을 돌릴지. 재학습 없이 export 만: train: false, export: true
+stages:
+  preview_aug: false         # 증강이 어떻게 먹는지 먼저 눈으로 볼 때만 true
+  train: true
+  export: true
 
 train:
   model: yolo26s-seg.pt      # 시작 가중치. 없으면 Ultralytics가 자동 다운로드
-  data: ../datasets/merged/data.yaml   # merge.py 산출물 (download.py → merge.py 선행)
+  data: ../datasets/processed/data.yaml   # preprocess.py 산출물
   epochs: 100
   imgsz: 640                 # 앱이 640으로 추론 → 640 유지 권장
   batch: -1                  # -1 = GPU 메모리에 맞춰 AutoBatch. 정수로 고정 가능
@@ -17,3 +23,39 @@ train:
   optimizer: auto
   cos_lr: true
   seed: 0
+
+  # ── 증강 (Ultralytics 온라인 증강) ────────────────────────────────────
+  # 학습 중 매 epoch 새로 적용되므로 디스크에 굽지 않습니다.
+  # 값을 바꾼 뒤 stages.preview_aug: true 로 한 번 돌려 눈으로 확인하세요.
+  hsv_h: 0.015               # 색상 ±비율
+  hsv_s: 0.7                 # 채도
+  hsv_v: 0.4                 # 명도 — 조명이 변하는 현장이면 키울 것
+  degrees: 0.0               # 회전(도). 와이어 방향이 고정이면 0 유지
+  translate: 0.1
+  scale: 0.5                 # 확대/축소 ±비율
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0                # 위아래 뒤집기. 카메라가 고정이면 0
+  fliplr: 0.5                # 좌우 뒤집기
+  mosaic: 1.0                # 4장 합성. close_mosaic epoch 남기고 자동 종료
+  close_mosaic: 10           # 마지막 N epoch 은 mosaic 끔
+  mixup: 0.0
+  copy_paste: 0.0            # seg 전용. 인스턴스 복사-붙여넣기(클래스가 부족할 때)
+  erasing: 0.4
+
+export:
+  format: onnx
+  opset: 12                  # YoloDotNet(ONNX Runtime) 호환. 필요시 조정
+  simplify: true
+  half: false                # FP16 export. 런타임이 지원할 때만 true
+  dynamic: false
+  # export된 onnx를 복사할 목적지(앱 Models 폴더). 비우면 복사 안 함.
+  # 기존 파일은 그대로 두고, 실제 파일명엔 타임스탬프가 붙습니다.
+  #   예: yolo26s-seg.onnx → yolo26s-seg.20260723_153000.onnx
+  deploy_to: ../src/BaslerLiveView/Models/yolo26s-seg.onnx
+
+# stages.preview_aug 설정. 실제 학습 결과(runs/segment)와 섞이지 않게 따로 나갑니다.
+preview:
+  project: runs/preview
+  name: aug
+  fraction: 0.1              # 미리보기용으로 학습셋의 일부만 사용 (빨리 끝내려고)
