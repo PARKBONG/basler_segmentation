@@ -45,3 +45,5 @@ include/pylon/Runtime/x64/DataProcessingPluginsB/
 # Python 바이트코드
 __pycache__/
 *.py[cod]
+
+*.pyc
