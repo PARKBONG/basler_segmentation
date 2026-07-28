@@ -9,6 +9,9 @@
 - 크롭은 이미지와 폴리곤 라벨을 함께 변환합니다. 창 밖으로 나간 인스턴스는 잘리고,
   남은 면적이 min_area 미만이면 인스턴스째 폐기, 살아남은 인스턴스가 하나도 없으면
   그 이미지는 데이터셋에서 제외됩니다(기존 동작과 동일: 대상 없는 이미지는 안 넣음).
+- 크롭 인자는 소스마다 독립입니다(공유 기본값 없음). 창을 %로 고정하거나
+  (width/height/center_x/center_y), auto_crop 으로 이미지마다 라벨에서 직접 잡습니다.
+- targets 에 이름을 적으면 그 소스만 처리합니다 (비우면 전체).
 
 증강은 여기서 하지 않습니다. Ultralytics 가 학습 중에 온라인 증강을 하므로
 train_config.yaml 의 증강 하이퍼파라미터로 조절하고, 결과 확인은
@@ -39,9 +42,11 @@ def crop_rect(src_w: int, src_h: int, crop: dict) -> tuple[int, int, int, int]:
     """
     크롭 창 (x, y, w, h) 을 픽셀로 계산.
 
+    width / height 가 0(또는 없음)이면 그 축은 원본 전체를 씁니다. 요청 크기가
+    원본보다 크면 원본 크기로 클램프합니다.
+
     center_x / center_y 는 0~100% 이며 앱(FrameCropper.cs)과 같은 규약입니다:
-    0 = 왼쪽/위 끝, 100 = 오른쪽/아래 끝, 50 = 중앙. 요청 크기가 원본보다 크면
-    원본 크기로 클램프합니다.
+    0 = 왼쪽/위 끝, 100 = 오른쪽/아래 끝, 50 = 중앙.
     """
     w = min(max(int(crop.get("width") or src_w), 1), src_w)
     h = min(max(int(crop.get("height") or src_h), 1), src_h)
@@ -49,6 +54,46 @@ def crop_rect(src_w: int, src_h: int, crop: dict) -> tuple[int, int, int, int]:
     cy = min(max(float(crop.get("center_y", 50)), 0.0), 100.0)
     x = int(round((src_w - w) * cx / 100.0))
     y = int(round((src_h - h) * cy / 100.0))
+    return x, y, w, h
+
+
+def label_bbox(lines: list, src_w: int, src_h: int) -> tuple | None:
+    """라벨 폴리곤 전부를 감싸는 픽셀 경계상자 (x0, y0, x1, y1). 폴리곤이 없으면 None."""
+    xs: list = []
+    ys: list = []
+    for line in lines:
+        coords = [float(v) for v in line.split()[1:]]
+        if len(coords) < 6 or len(coords) % 2:
+            continue                      # 폴리곤이 아닌 줄(bbox 등)은 무시
+        xs.extend(coords[0::2])
+        ys.extend(coords[1::2])
+    if not xs:
+        return None
+    return (min(xs) * src_w, min(ys) * src_h, max(xs) * src_w, max(ys) * src_h)
+
+
+def auto_crop_rect(src_w: int, src_h: int, bbox: tuple, auto: dict) -> tuple[int, int, int, int]:
+    """
+    라벨(wire) 위치에서 크롭 창을 직접 잡습니다 — center_x/center_y % 대신 쓰는 모드.
+
+    축마다 따로: 크기 = 라벨 경계상자 변 × (1 + 2*margin), min_size 아래로는 내려가지
+    않게 키우고 원본 크기로 클램프. 중심은 라벨 경계상자의 중심이며, 창이 이미지 밖으로
+    나가면 안쪽으로 밀어 넣습니다.
+
+    원본이 min_size 보다 작아 창을 더 키우지 못하는 경우가 있으므로(경고 대상),
+    호출 쪽에서 결과 크기를 확인해야 합니다.
+    """
+    margin = max(float(auto.get("margin", 0.25)), 0.0)
+    min_size = max(int(auto.get("min_size", 640) or 0), 0)
+    x0, y0, x1, y1 = bbox
+
+    out = []
+    for lo, hi, src in ((x0, x1, src_w), (y0, y1, src_h)):
+        size = min(max(int(round((hi - lo) * (1.0 + 2.0 * margin))), min_size, 1), src)
+        start = int(round((lo + hi) / 2.0 - size / 2.0))
+        out.append((min(max(start, 0), src - size), size))
+
+    (x, w), (y, h) = out
     return x, y, w, h
 
 
@@ -154,6 +199,26 @@ class Preprocessor(Stage):
         self.out = self.resolve(self.cfg["out"])
         self._dropped_empty = 0       # 크롭 후 인스턴스가 모두 사라져 제외된 이미지 수
         self._dropped_instances = 0   # 크롭 창 밖으로 나가 폐기된 인스턴스 수
+        self._undersized = 0          # auto_crop 창이 min_size 에 못 미친 이미지 수
+        self._undersized_min = 0      # 그 중 가장 작았던 변 (px)
+
+    # -- 소스 선택 -------------------------------------------------------
+
+    def selected_sources(self) -> list:
+        """targets 에 적힌 소스만 (비어 있으면 전체). 이름이 틀리면 바로 알려줍니다."""
+        sources = self.cfg.get("sources") or []
+        targets = self.cfg.get("targets") or []
+        if not targets:
+            return sources
+
+        by_name = {s["name"]: s for s in sources}
+        unknown = [t for t in targets if t not in by_name]
+        if unknown:
+            raise SystemExit(
+                f"[{self.label}] targets 에 없는 소스 이름: {', '.join(unknown)}\n"
+                f"  sources 에 있는 이름: {', '.join(by_name) or '(없음)'}"
+            )
+        return [by_name[t] for t in targets]
 
     # -- 소스 읽기 -------------------------------------------------------
 
@@ -201,11 +266,22 @@ class Preprocessor(Stage):
             out.append(" ".join(parts))
         return out
 
-    def crop_config(self, src: dict) -> dict:
-        """소스별 크롭 설정 = defaults.crop 위에 소스의 crop 을 덮어쓴 것."""
-        base = dict((self.cfg.get("defaults") or {}).get("crop") or {})
-        base.update(src.get("crop") or {})
-        return base
+    @staticmethod
+    def crop_config(src: dict) -> dict:
+        """소스별 크롭 설정. 공유 기본값 없이 소스마다 독립입니다."""
+        return dict(src.get("crop") or {})
+
+    @staticmethod
+    def crop_summary(crop: dict) -> str:
+        """로그 한 줄용 크롭 요약."""
+        if not crop.get("enabled"):
+            return "crop off"
+        auto = crop.get("auto_crop") or {}
+        if auto.get("enabled"):
+            return (f"auto crop (margin {auto.get('margin', 0.25)}, "
+                    f"min {auto.get('min_size', 640)}px)")
+        return (f"crop {crop.get('width') or '원본'}×{crop.get('height') or '원본'} "
+                f"@{crop.get('center_x', 50)}%,{crop.get('center_y', 50)}%")
 
     def collect_source(self, src: dict) -> list:
         """
@@ -231,6 +307,9 @@ class Preprocessor(Stage):
         class_map = src.get("class_map", {})
         crop = self.crop_config(src)
         cropping = bool(crop.get("enabled"))
+        auto = crop.get("auto_crop") or {}
+        auto_on = cropping and bool(auto.get("enabled"))
+        min_size = max(int(auto.get("min_size", 640) or 0), 0)
         min_area = float(crop.get("min_area", 0.10))
         if cropping:
             from PIL import Image   # 크롭을 쓸 때만 필요 (pillow 미설치여도 병합은 동작)
@@ -257,7 +336,20 @@ class Preprocessor(Stage):
                 if cropping:
                     with Image.open(img) as im:
                         src_w, src_h = im.width, im.height
-                    rect = crop_rect(src_w, src_h, crop)
+                    if auto_on:
+                        # 창을 라벨에서 잡으므로 remap 된 라벨이 먼저 있어야 합니다.
+                        bbox = label_bbox(lines, src_w, src_h)
+                        if bbox is None:
+                            self._dropped_empty += 1   # 폴리곤이 없으면 중심을 못 잡음
+                            continue
+                        rect = auto_crop_rect(src_w, src_h, bbox, auto)
+                        got = min(rect[2], rect[3])
+                        if got < min_size:             # 원본이 작아 더 못 키운 경우
+                            self._undersized += 1
+                            self._undersized_min = (min(self._undersized_min, got)
+                                                    if self._undersized_min else got)
+                    else:
+                        rect = crop_rect(src_w, src_h, crop)
                     kept = [t for t in (transform_label(ln, src_w, src_h, rect, min_area)
                                         for ln in lines) if t]
                     self._dropped_instances += len(lines) - len(kept)
@@ -369,8 +461,14 @@ class Preprocessor(Stage):
         for d in (*dirs.values(), *lbls.values()):
             self.clear_dir(d)  # 재실행 시 깨끗하게
 
+        sources = self.selected_sources()
+        all_names = [s["name"] for s in (self.cfg.get("sources") or [])]
+        if len(sources) != len(all_names):
+            self.log(f"대상(targets): {', '.join(s['name'] for s in sources)} "
+                     f"— 전체 {len(all_names)}개 중. 산출물엔 이 소스만 남습니다.")
+
         n_train = n_val = 0
-        for src in self.cfg.get("sources", []):
+        for src in sources:
             items = self.collect_source(src)
             if not items:
                 self.log(f"{src['name']}: 대상 이미지 0장 (경로/class_map/크롭 확인)")
@@ -395,10 +493,7 @@ class Preprocessor(Stage):
 
             n_train += src_train
             n_val += n_val_src
-            crop = self.crop_config(src)
-            how = (f"crop {crop.get('width')}×{crop.get('height')} "
-                   f"@{crop.get('center_x', 50)}%,{crop.get('center_y', 50)}%"
-                   if crop.get("enabled") else "crop off")
+            how = self.crop_summary(self.crop_config(src))
             self.log(f"{src['name']}: train +{src_train} (oversample x{oversample}), "
                      f"val +{n_val_src}  [{how}]")
 
@@ -415,6 +510,11 @@ class Preprocessor(Stage):
             self.log(f"크롭으로 폐기된 인스턴스 {self._dropped_instances}개 "
                      f"(그 중 대상이 하나도 안 남아 제외된 이미지 {self._dropped_empty}장). "
                      f"많으면 center_x/center_y 또는 min_area 를 조정하세요.")
+
+        if self._undersized:
+            self.log(f"경고: auto_crop 창이 min_size 에 못 미친 이미지 {self._undersized}장 "
+                     f"(가장 작은 변 {self._undersized_min}px). 원본이 그보다 작아 더 키울 수 "
+                     f"없었습니다 — 학습 해상도가 떨어집니다.")
 
         preview = self.cfg.get("preview") or {}
         if preview.get("enabled"):

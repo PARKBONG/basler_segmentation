@@ -2,11 +2,13 @@
 파이프라인 자체 검증 — GPU도 카메라도 공개 데이터셋도 없이 돌아갑니다.
 
 검증 대상:
-  1. 크롭 기하 (crop_rect)          — 0/50/100% 규약, 원본보다 큰 요청의 클램프
-  2. 폴리곤 클리핑 (clip_polygon)   — 완전 포함 / 완전 배제 / 부분 걸침
-  3. 라벨 변환 (transform_label)    — 재정규화 좌표, min_area 폐기, 비폴리곤 폐기
-  4. Preprocessor 전체              — 합성 데이터셋으로 병합·분할·oversample·크롭
+  1. 크롭 기하 (crop_rect)          — 0/50/100% 규약, 0=원본, 원본보다 큰 요청의 클램프
+  2. 자동 크롭 (auto_crop_rect)     — 라벨 중심 정렬, margin, min_size 하한, 경계 밀어넣기
+  3. 폴리곤 클리핑 (clip_polygon)   — 완전 포함 / 완전 배제 / 부분 걸침
+  4. 라벨 변환 (transform_label)    — 재정규화 좌표, min_area 폐기, 비폴리곤 폐기
+  5. Preprocessor 전체              — 합성 데이터셋으로 병합·분할·oversample·크롭
                                       + val 누수 없음 + class_map 필터 + data.yaml
+                                      + targets 필터 + auto_crop 산출물
 
 필요: pyyaml, pillow  (ultralytics/torch 는 필요 없음)
 
@@ -23,7 +25,8 @@ from pathlib import Path
 import yaml
 from PIL import Image
 
-from preprocess import Preprocessor, clip_polygon, crop_rect, polygon_area, transform_label
+from preprocess import (Preprocessor, auto_crop_rect, clip_polygon, crop_rect, label_bbox,
+                        polygon_area, transform_label)
 
 FAILURES: list = []
 
@@ -54,8 +57,49 @@ def test_crop_rect() -> None:
     check("crop_rect % 클램프",
           crop_rect(1920, 1080, {**base, "center_x": -50, "center_y": 500}) == (0, 440, 640, 640))
 
+    # 0 = 그 축은 원본 전체 (여기서는 좌우만 원본, 상하는 640 중앙)
+    check("crop_rect 0 은 원본 전체",
+          crop_rect(1920, 1080, {"width": 0, "height": 640, "center_y": 50}) == (0, 220, 1920, 640),
+          f"{crop_rect(1920, 1080, {'width': 0, 'height': 640, 'center_y': 50})}")
 
-# ── 2. 폴리곤 클리핑 ────────────────────────────────────────────────────────
+
+# ── 2. 자동 크롭 ────────────────────────────────────────────────────────────
+
+def test_auto_crop_rect() -> None:
+    # 1000x1000 이미지, 라벨은 (0.40~0.60) → 픽셀 (400,400)-(600,600)
+    lines = ["0 0.40 0.40 0.60 0.40 0.60 0.60 0.40 0.60"]
+    bbox = label_bbox(lines, 1000, 1000)
+    check("label_bbox 픽셀 경계상자", bbox == (400.0, 400.0, 600.0, 600.0), f"{bbox}")
+
+    # margin 0.25 → 200px * 1.5 = 300px, min_size 0 이면 그대로. 중심 500 → 시작 350
+    check("auto: margin 적용 + 라벨 중심 정렬",
+          auto_crop_rect(1000, 1000, bbox, {"margin": 0.25, "min_size": 0}) == (350, 350, 300, 300),
+          f"{auto_crop_rect(1000, 1000, bbox, {'margin': 0.25, 'min_size': 0})}")
+
+    # min_size 640 → 300px 대신 640px 로 키움 (중심은 그대로 500 → 시작 180)
+    check("auto: min_size 하한",
+          auto_crop_rect(1000, 1000, bbox, {"margin": 0.25, "min_size": 640}) == (180, 180, 640, 640),
+          f"{auto_crop_rect(1000, 1000, bbox, {'margin': 0.25, 'min_size': 640})}")
+
+    # 구석 라벨 → 창이 이미지 밖으로 못 나가게 안쪽으로 밀어 넣음
+    corner = label_bbox(["0 0.01 0.01 0.05 0.01 0.05 0.05 0.01 0.05"], 1000, 1000)
+    x, y, w, h = auto_crop_rect(1000, 1000, corner, {"margin": 0.25, "min_size": 640})
+    check("auto: 이미지 경계 밀어넣기",
+          (x, y, w, h) == (0, 0, 640, 640), f"{(x, y, w, h)}")
+
+    # 원본이 min_size 보다 작으면 원본 크기로 클램프 (호출 쪽이 경고할 대상)
+    small = auto_crop_rect(320, 240, (100.0, 100.0, 140.0, 140.0), {"margin": 0.25, "min_size": 640})
+    check("auto: 원본보다 크게 못 키움", small == (0, 0, 320, 240), f"{small}")
+
+    # 축마다 독립 — 가로로 긴 라벨은 가로만 넓어짐
+    wide = label_bbox(["0 0.05 0.48 0.95 0.48 0.95 0.52 0.05 0.52"], 1000, 1000)
+    x, y, w, h = auto_crop_rect(1000, 1000, wide, {"margin": 0.0, "min_size": 640})
+    check("auto: 축마다 독립 크기", (w, h) == (900, 640), f"{(w, h)}")
+
+    check("label_bbox: 폴리곤 없으면 None", label_bbox(["0 0.5 0.5 0.2 0.2"], 100, 100) is None)
+
+
+# ── 3. 폴리곤 클리핑 ────────────────────────────────────────────────────────
 
 def test_clip_polygon() -> None:
     square = [(10.0, 10.0), (90.0, 10.0), (90.0, 90.0), (10.0, 90.0)]
@@ -84,7 +128,7 @@ def test_clip_polygon() -> None:
           f"area={polygon_area(contained)}")
 
 
-# ── 3. 라벨 변환 ────────────────────────────────────────────────────────────
+# ── 4. 라벨 변환 ────────────────────────────────────────────────────────────
 
 def test_transform_label() -> None:
     # 1000x1000 원본의 (400,400)-(600,600) 사각형, 크롭 창 (200,200,600,600)
@@ -117,7 +161,7 @@ def test_transform_label() -> None:
           transform_label("0 0.5 0.5 0.2 0.2", 1000, 1000, rect, 0.10) is None)
 
 
-# ── 4. Preprocessor 전체 ────────────────────────────────────────────────────
+# ── 5. Preprocessor 전체 ────────────────────────────────────────────────────
 
 def make_source(root: Path, name: str, count: int, size: int,
                 class_names: dict, lines_for) -> Path:
@@ -135,8 +179,9 @@ def make_source(root: Path, name: str, count: int, size: int,
     return src
 
 
-def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False) -> dict:
-    """합성 소스 2개로 Preprocessor 를 돌리고 config 를 돌려준다."""
+def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False,
+                   targets: list | None = None) -> dict:
+    """합성 소스 2개로 Preprocessor 를 돌리고 그 인스턴스를 돌려준다(집계값 확인용)."""
     # 중앙에 붙은 사각형 하나 + (junk 클래스) 구석에 하나
     def local_lines(i):
         return ["0 0.40 0.40 0.60 0.40 0.60 0.60 0.40 0.60"]
@@ -150,7 +195,7 @@ def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False) -> 
 
     cfg = {
         "names": {0: "wire"},
-        "defaults": {"crop": {"enabled": False}},
+        "targets": targets or [],
         "sources": [
             {"name": "raw", "path": str(root / "raw"),
              "class_map": {"wire": "wire"}, "val_ratio": 0.2, "oversample": 2,
@@ -167,8 +212,9 @@ def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False) -> 
     with cfg_path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, allow_unicode=True)
 
-    Preprocessor(cfg_path).run()
-    return cfg
+    stage = Preprocessor(cfg_path)
+    stage.run()
+    return stage
 
 
 def test_pipeline_no_crop(root: Path) -> None:
@@ -241,8 +287,59 @@ def test_pipeline_crop(root: Path) -> None:
     check("crop: 미리보기 생성", len(previews) > 0, f"{len(previews)}장")
 
 
+def test_pipeline_auto_crop(root: Path) -> None:
+    out = root / "out_auto"
+    crop = {"enabled": True, "min_area": 0.10,
+            "auto_crop": {"enabled": True, "margin": 0.25, "min_size": 640}}
+    stage = run_preprocess(root / "srcC", out, crop)
+
+    train_imgs = sorted((out / "images/train").glob("*.png"))
+    check("auto: 장수 유지", len(train_imgs) == 22, f"{len(train_imgs)}")
+
+    # 800px 원본의 (320,320)-(480,480) 라벨 → 160*1.5=240 이지만 min_size 640 으로 확대,
+    # 중심 400 → 창 (80,80,640,640). 라벨은 (240,240)-(400,400) → /640 = 0.375~0.625
+    with Image.open(train_imgs[0]) as im:
+        check("auto: 출력 이미지 크기 = min_size", (im.width, im.height) == (640, 640), f"{im.size}")
+    v = [float(x) for x in (out / "labels/train" / (train_imgs[0].stem + ".txt")
+                            ).read_text(encoding="utf-8").splitlines()[0].split()[1:]]
+    check("auto: 라벨이 창 좌표로 재정규화",
+          approx(min(v), 0.375, 1e-3) and approx(max(v), 0.625, 1e-3),
+          f"min={min(v):.4f} max={max(v):.4f}")
+    check("auto: 원본이 충분히 크면 경고 없음", stage._undersized == 0, f"{stage._undersized}")
+
+    # min_size 가 원본(800)보다 크면 원본 크기로 클램프되고 경고 대상이 됨
+    out2 = root / "out_auto_small"
+    crop2 = {"enabled": True, "min_area": 0.10,
+             "auto_crop": {"enabled": True, "margin": 0.25, "min_size": 1024}}
+    stage2 = run_preprocess(root / "srcD", out2, crop2)
+    check("auto: min_size > 원본이면 경고 집계", stage2._undersized > 0, f"{stage2._undersized}")
+    with Image.open(sorted((out2 / "images/train").glob("*.png"))[0]) as im:
+        check("auto: 원본 크기로 클램프", (im.width, im.height) == (800, 800), f"{im.size}")
+
+
+def test_pipeline_targets(root: Path) -> None:
+    out = root / "out_targets"
+    run_preprocess(root / "srcE", out, {"enabled": False}, targets=["rf_a"])
+
+    train_imgs = sorted((out / "images/train").glob("*.png"))
+    check("targets: 지정한 소스만 처리", len(train_imgs) == 6, f"{len(train_imgs)}")
+    check("targets: 빠진 소스는 산출물에 없음",
+          all(p.name.startswith("rf_a__") for p in train_imgs),
+          ", ".join(p.name for p in train_imgs[:3]))
+    check("targets: val_ratio 0 소스만이면 val 은 빔",
+          not list((out / "images/val").glob("*.png")))
+
+    # 없는 이름은 조용히 넘어가지 않고 바로 알려줘야 함
+    try:
+        run_preprocess(root / "srcF", root / "out_bad", {"enabled": False}, targets=["nope"])
+        check("targets: 오타는 SystemExit", False, "예외가 안 났음")
+    except SystemExit as e:
+        check("targets: 오타는 SystemExit", "nope" in str(e), str(e).splitlines()[0])
+
+
 def main() -> int:
     test_crop_rect()
+    test_auto_crop_rect()
     test_clip_polygon()
     test_transform_label()
 
@@ -250,6 +347,8 @@ def main() -> int:
     try:
         test_pipeline_no_crop(root)
         test_pipeline_crop(root)
+        test_pipeline_auto_crop(root)
+        test_pipeline_targets(root)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
