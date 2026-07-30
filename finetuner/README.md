@@ -112,12 +112,13 @@ targets:
 
 ## 크롭
 
-**이미지와 폴리곤 라벨을 함께** 자릅니다. 위치 규약은 앱의 `FrameCropper.cs` 와 동일합니다 —
-`center_x`(좌우)/`center_y`(상하) 가 0% 왼쪽/위 끝, 100% 오른쪽/아래 끝, 50% 중앙.
+**이미지와 폴리곤 라벨을 함께** 자릅니다. 크기·위치 규약 모두 앱의 `FrameCropper.cs` 와
+동일합니다 — `center_x`(좌우)/`center_y`(상하) 가 0% 왼쪽/위 끝, 100% 오른쪽/아래 끝,
+50% 중앙이고, 크기 `0` 은 양쪽 다 "그 축은 원본 전체" 입니다.
 
 | 인자 | 뜻 |
 |------|-----|
-| `width` / `height` | 창 크기(px). **`0` 이면 그 축은 원본 전체** (원본보다 크면 원본으로 클램프) |
+| `width` / `height` | 창 크기(px). **`0` 이하면 그 축은 원본 전체** (원본보다 크면 원본으로 클램프) |
 | `center_x` / `center_y` | 창 위치(%) — 좌우 / 상하 |
 | `auto_crop` | 아래 참고. 켜면 위 네 값은 무시 |
 | `min_area` | 크롭 후 남은 폴리곤 면적비 하한 |
@@ -199,3 +200,4 @@ python -c "import torch; print(torch.__version__, torch.cuda.get_device_name(0))
 
 ## roboflow
 $ setx ROBOFLOW_API_KEY "mzbA71wxvqdAFlyB6nPN" ## dummy fake key
+

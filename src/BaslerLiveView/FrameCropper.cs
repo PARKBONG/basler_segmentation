@@ -27,7 +27,10 @@ public sealed class FrameCropper
     /// <summary>When false, <see cref="Crop"/> passes the frame through untouched.</summary>
     public bool Enabled { get; set; }
 
-    /// <summary>Requested crop size in pixels. Clamped to the source frame.</summary>
+    /// <summary>Requested crop size in pixels. 0 (or negative) means the full
+    /// source extent on that axis — the same convention as finetuner/preprocess.py,
+    /// so a size copied between the app and preprocess_config.yaml means the same
+    /// thing in both places. Larger than the frame is clamped to the frame.</summary>
     public int Width { get; set; } = 640;
     public int Height { get; set; } = 640;
 
@@ -52,10 +55,11 @@ public sealed class FrameCropper
         if (!Enabled)
             return false;
 
-        // A crop larger than the sensor image is clamped instead of rejected, so
-        // a 640 setting still does something sensible on a smaller camera.
-        int w = Math.Clamp(Width, 1, srcWidth);
-        int h = Math.Clamp(Height, 1, srcHeight);
+        // 0 = full extent on that axis (preprocess.py convention). A crop larger
+        // than the sensor image is clamped instead of rejected, so a 640 setting
+        // still does something sensible on a smaller camera.
+        int w = Width <= 0 ? srcWidth : Math.Min(Width, srcWidth);
+        int h = Height <= 0 ? srcHeight : Math.Min(Height, srcHeight);
         if (w == srcWidth && h == srcHeight)
             return false;
 

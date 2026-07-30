@@ -73,10 +73,14 @@ def test_crop_rect() -> None:
     check("crop_rect % 클램프",
           crop_rect(1920, 1080, {**base, "center_x": -50, "center_y": 500}) == (0, 440, 640, 640))
 
-    # 0 = 그 축은 원본 전체 (여기서는 좌우만 원본, 상하는 640 중앙)
+    # 0 이하 = 그 축은 원본 전체 (여기서는 좌우만 원본, 상하는 640 중앙) — 앱과 같은 규약
     check("crop_rect 0 은 원본 전체",
           crop_rect(1920, 1080, {"width": 0, "height": 640, "center_y": 50}) == (0, 220, 1920, 640),
           f"{crop_rect(1920, 1080, {'width': 0, 'height': 640, 'center_y': 50})}")
+    check("crop_rect 음수도 원본 전체",
+          crop_rect(1920, 1080, {"width": -1, "height": 640, "center_y": 50}) == (0, 220, 1920, 640))
+    check("crop_rect width 누락도 원본 전체",
+          crop_rect(1920, 1080, {"height": 640, "center_y": 50}) == (0, 220, 1920, 640))
 
 
 # ── 2. 자동 크롭 ────────────────────────────────────────────────────────────

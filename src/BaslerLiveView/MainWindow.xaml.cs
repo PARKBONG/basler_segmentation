@@ -202,14 +202,15 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Push the toolbar's crop controls onto the cropper. Invalid or empty
-    /// size text is simply ignored, so typing "6" on the way to "640" is harmless.</summary>
+    /// size text is simply ignored, so typing "6" on the way to "640" is harmless.
+    /// 0 is accepted and means the full frame on that axis (preprocess.py convention).</summary>
     private void ApplyCropSettings()
     {
         if (!_cropUiReady) return;
 
         _cropper.Enabled = CropCheck.IsChecked == true;
-        if (int.TryParse(CropWidthBox.Text, out int w) && w > 0) _cropper.Width = w;
-        if (int.TryParse(CropHeightBox.Text, out int h) && h > 0) _cropper.Height = h;
+        if (int.TryParse(CropWidthBox.Text, out int w) && w >= 0) _cropper.Width = w;
+        if (int.TryParse(CropHeightBox.Text, out int h) && h >= 0) _cropper.Height = h;
         _cropper.CenterXPercent = CropXSlider.Value;
         _cropper.CenterYPercent = CropYSlider.Value;
 

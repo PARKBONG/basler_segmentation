@@ -12,10 +12,16 @@
 # train_config*.yaml 은 batch: -1 (AutoBatch) 라서 GPU 메모리에 맞춰 자동 조정됩니다 —
 # B200/5090 어느 쪽에서도 config 수정 없이 그대로 돌아갑니다.
 
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+torch
+torchvision
 ultralytics>=8.3.0
+
 pyyaml>=6.0            # *_config.yaml 로드 (ultralytics 의존성이지만 명시)
 pillow>=10.0           # 크롭/리사이즈/미리보기 — preprocess.py, selftest.py
-roboflow>=1.1.0       # (선택) 공개 데이터셋 SDK 다운로드용 — download.py
+roboflow>=1.0  # (선택) 공개 데이터셋 SDK 다운로드용 — download.py. 1.0 미만은 Version.download 없음
+python-dotenv  # 
 onnx>=1.16.0
 onnxruntime-gpu>=1.18.0   # export 검증용(선택). CPU만이면 onnxruntime 로 교체
 onnxslim>=0.1.34          # ONNX 그래프 최적화(export 시 Ultralytics가 사용)

@@ -42,14 +42,17 @@ def crop_rect(src_w: int, src_h: int, crop: dict) -> tuple[int, int, int, int]:
     """
     크롭 창 (x, y, w, h) 을 픽셀로 계산.
 
-    width / height 가 0(또는 없음)이면 그 축은 원본 전체를 씁니다. 요청 크기가
-    원본보다 크면 원본 크기로 클램프합니다.
-
-    center_x / center_y 는 0~100% 이며 앱(FrameCropper.cs)과 같은 규약입니다:
-    0 = 왼쪽/위 끝, 100 = 오른쪽/아래 끝, 50 = 중앙.
+    크기와 위치 모두 앱(FrameCropper.cs)과 같은 규약입니다:
+    - width / height 가 0 이하(또는 없음)이면 그 축은 원본 전체를 씁니다.
+      요청 크기가 원본보다 크면 원본 크기로 클램프합니다.
+    - center_x / center_y 는 0~100%: 0 = 왼쪽/위 끝, 100 = 오른쪽/아래 끝, 50 = 중앙.
     """
-    w = min(max(int(crop.get("width") or src_w), 1), src_w)
-    h = min(max(int(crop.get("height") or src_h), 1), src_h)
+    def size(want, src: int) -> int:
+        want = int(want or 0)
+        return src if want <= 0 else min(want, src)
+
+    w = size(crop.get("width"), src_w)
+    h = size(crop.get("height"), src_h)
     cx = min(max(float(crop.get("center_x", 50)), 0.0), 100.0)
     cy = min(max(float(crop.get("center_y", 50)), 0.0), 100.0)
     x = int(round((src_w - w) * cx / 100.0))
