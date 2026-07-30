@@ -9,6 +9,8 @@
   5. Preprocessor 전체              — 합성 데이터셋으로 병합·분할·oversample·크롭
                                       + val 누수 없음 + class_map 필터 + data.yaml
                                       + targets 필터 + auto_crop 산출물
+  6. Trainer config 규약            — config 명시 강제(조용한 fallback 금지),
+                                      stages/데이터/가중치 누락·오타 시 즉시 오류
 
 필요: pyyaml, pillow  (ultralytics/torch 는 필요 없음)
 
@@ -25,8 +27,10 @@ from pathlib import Path
 import yaml
 from PIL import Image
 
+from common import HERE
 from preprocess import (Preprocessor, auto_crop_rect, clip_polygon, crop_rect, label_bbox,
                         polygon_area, transform_label)
+from train import Trainer   # ultralytics 는 메서드 안에서 import 하므로 여기선 불필요
 
 FAILURES: list = []
 
@@ -39,6 +43,18 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 def approx(a, b, tol=1e-6) -> bool:
     return abs(a - b) <= tol
+
+
+def expect_raises(name: str, exc, fn, needle: str = "") -> None:
+    """fn() 이 exc 를 던지고 메시지에 needle 이 들어있는지."""
+    try:
+        fn()
+    except exc as e:
+        check(name, needle in str(e), str(e).splitlines()[0])
+    except Exception as e:                                    # noqa: BLE001
+        check(name, False, f"다른 예외: {type(e).__name__}: {e}")
+    else:
+        check(name, False, "예외가 안 났음")
 
 
 # ── 1. 크롭 기하 ────────────────────────────────────────────────────────────
@@ -337,6 +353,120 @@ def test_pipeline_targets(root: Path) -> None:
         check("targets: 오타는 SystemExit", "nope" in str(e), str(e).splitlines()[0])
 
 
+# ── 6. Trainer config 규약 ──────────────────────────────────────────────────
+
+def write_train_cfg(root: Path, name: str, cfg: dict) -> Path:
+    path = root / name
+    with path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(cfg, f, allow_unicode=True)
+    return path
+
+
+def test_trainer_config_required(root: Path) -> None:
+    """config 를 생략하면 기본값으로 넘어가지 않고 즉시 멈춰야 합니다."""
+    expect_raises("trainer: config 생략은 SystemExit", SystemExit, Trainer, "명시")
+
+    # 이름을 잘못 적어도 traceback 이 아니라 후보 안내
+    expect_raises("trainer: 없는 config 는 SystemExit + 후보 안내", SystemExit,
+                  lambda: Trainer("train_config.stage3.yaml"), "후보")
+    check("trainer: config 후보 목록", "train_config.stage1.yaml" in Trainer.config_candidates(),
+          Trainer.config_candidates())
+
+    # 상대경로는 finetuner/ 기준으로 해석되고, 넘긴 파일이 그대로 쓰여야 함
+    t = Trainer("train_config.stage1.yaml")
+    check("trainer: 넘긴 config 를 그대로 읽음",
+          t.config_path == HERE / "train_config.stage1.yaml", str(t.config_path))
+    check("trainer: stage1 config 내용 확인",
+          t.cfg["train"]["name"] == "stage1", str(t.cfg["train"].get("name")))
+
+
+def test_trainer_stages_guard(root: Path) -> None:
+    """stages 블록 누락 · 키 오타 · 전부 false 는 모두 오류."""
+    base = {"train": {"model": "yolo26s-seg.pt", "data": "d/data.yaml"}}
+
+    p = write_train_cfg(root, "t_nostages.yaml", base)
+    expect_raises("stages: 블록 없으면 SystemExit", SystemExit, Trainer(p).run, "stages 블록")
+
+    p = write_train_cfg(root, "t_typo.yaml", {**base, "stages": {"expor": True}})
+    expect_raises("stages: 키 오타는 SystemExit", SystemExit, Trainer(p).run, "expor")
+
+    p = write_train_cfg(root, "t_allfalse.yaml",
+                        {**base, "stages": {"preview_aug": False, "train": False,
+                                            "export": False}})
+    expect_raises("stages: 전부 false 면 SystemExit", SystemExit, Trainer(p).run, "전부 false")
+
+    # 유효한 stages 는 해당 단계만, 적힌 순서와 무관하게 정해진 순서로 호출
+    called: list = []
+    p = write_train_cfg(root, "t_ok.yaml",
+                        {**base, "stages": {"export": True, "preview_aug": True,
+                                            "train": False}})
+    tr = Trainer(p)
+    tr.preview_aug = lambda: called.append("preview_aug")   # type: ignore[method-assign]
+    tr.train = lambda: called.append("train")               # type: ignore[method-assign]
+    tr.export = lambda: called.append("export")             # type: ignore[method-assign]
+    tr.run()
+    check("stages: 켠 단계만 정해진 순서로 실행",
+          called == ["preview_aug", "export"], str(called))
+
+
+def test_trainer_data_and_weights(root: Path) -> None:
+    """데이터셋·시작 가중치도 기본값으로 추측하지 않습니다."""
+    p = write_train_cfg(root, "t_nodata.yaml",
+                        {"stages": {"train": True}, "train": {"model": "yolo26s-seg.pt"}})
+    expect_raises("data: train.data 없으면 SystemExit", SystemExit,
+                  Trainer(p).data_path, "train.data")
+
+    p = write_train_cfg(root, "t_nomodel.yaml",
+                        {"stages": {"train": True}, "train": {"data": "d/data.yaml"}})
+    expect_raises("model: train.model 없으면 SystemExit", SystemExit,
+                  Trainer(p).start_weights, "train.model")
+
+    # 경로 구분자가 없으면 Ultralytics 가 받아올 이름 → 존재 확인 없이 그대로
+    p = write_train_cfg(root, "t_name.yaml",
+                        {"stages": {"train": True}, "train": {"data": "d/data.yaml",
+                                                              "model": "yolo26s-seg.pt"}})
+    check("model: 모델 이름은 그대로 통과",
+          Trainer(p).start_weights() == "yolo26s-seg.pt")
+
+    # 경로 형태인데 파일이 없으면 오류 (COCO 로 조용히 되돌아가지 않음)
+    p = write_train_cfg(root, "t_badckpt.yaml",
+                        {"stages": {"train": True},
+                         "train": {"data": "d/data.yaml",
+                                   "model": "runs/segment/stage1/weights/best.pt"}})
+    expect_raises("model: 없는 checkpoint 는 FileNotFoundError", FileNotFoundError,
+                  Trainer(p).start_weights, "시작 가중치가 없습니다")
+
+    # 있으면 절대경로로 해석
+    ckpt = root / "weights/best.pt"
+    ckpt.parent.mkdir(parents=True, exist_ok=True)
+    ckpt.write_bytes(b"not-a-real-checkpoint")
+    p = write_train_cfg(root, "t_goodckpt.yaml",
+                        {"stages": {"train": True},
+                         "train": {"data": "d/data.yaml", "model": str(ckpt)}})
+    check("model: 있는 checkpoint 는 절대경로로", Trainer(p).start_weights() == str(ckpt))
+
+
+def test_real_train_configs() -> None:
+    """저장소에 있는 train_config*.yaml 이 모두 규약을 지키는지 (config 린트)."""
+    names = sorted(p.name for p in HERE.glob(Trainer.config_glob))
+    check("configs: train_config*.yaml 이 존재", bool(names), ", ".join(names))
+
+    for name in names:
+        t = Trainer(name)
+        stages = t.cfg.get("stages")
+        ok = isinstance(stages, dict) and bool(stages)
+        check(f"config {name}: stages 블록", ok, str(stages))
+        if not ok:
+            continue
+        check(f"config {name}: stages 키 유효",
+              not [k for k in stages if k not in Trainer.STAGE_KEYS], str(list(stages)))
+        tr = t.cfg.get("train") or {}
+        check(f"config {name}: train.model 명시", bool(tr.get("model")), str(tr.get("model")))
+        check(f"config {name}: train.data 명시", bool(tr.get("data")), str(tr.get("data")))
+        if stages.get("export"):
+            check(f"config {name}: export 켰으면 export 블록도", bool(t.cfg.get("export")))
+
+
 def main() -> int:
     test_crop_rect()
     test_auto_crop_rect()
@@ -349,6 +479,10 @@ def main() -> int:
         test_pipeline_crop(root)
         test_pipeline_auto_crop(root)
         test_pipeline_targets(root)
+        test_trainer_config_required(root)
+        test_trainer_stages_guard(root)
+        test_trainer_data_and_weights(root)
+        test_real_train_configs()
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

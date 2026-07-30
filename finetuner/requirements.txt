@@ -1,12 +1,16 @@
-# RTX 5090 (Blackwell, sm_120) 학습 환경.
+# 학습 환경: B200 (Blackwell, sm_100) / RTX 5090 (Blackwell, sm_120) 공용.
 #
-# 중요: 5090은 CUDA 12.8+ 빌드 PyTorch가 필요합니다(그 이전 휠은 sm_120 미지원).
-# torch/torchvision 은 cu128 인덱스에서 받으세요:
+# 중요: 두 GPU 모두 Blackwell 세대라 CUDA 12.8+ 빌드 PyTorch가 필요합니다
+# (그 이전 휠은 sm_100/sm_120 미지원). cu128 휠 하나가 둘 다 커버하므로
+# 어느 머신이든 같은 명령으로 설치하면 됩니다:
 #
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 #   pip install -r requirements.txt
 #
 # (위 한 줄로 torch를 먼저 깐 뒤 아래를 설치하면, ultralytics가 기존 torch를 유지합니다.)
+#
+# train_config*.yaml 은 batch: -1 (AutoBatch) 라서 GPU 메모리에 맞춰 자동 조정됩니다 —
+# B200/5090 어느 쪽에서도 config 수정 없이 그대로 돌아갑니다.
 
 ultralytics>=8.3.0
 pyyaml>=6.0            # *_config.yaml 로드 (ultralytics 의존성이지만 명시)

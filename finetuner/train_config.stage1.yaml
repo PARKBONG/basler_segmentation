@@ -1,7 +1,15 @@
-# Stage 1 (공개 warm-up) 파인튜닝 설정 — train.py --config 로 지정.
+# Stage 1 (공개 warm-up) 파인튜닝 설정.
 #   python train.py --config train_config.stage1.yaml
-# 데이터: merge.py 산출물 datasets/stage1/data.yaml (공개 데이터만, in-domain 미포함)
+# (--config 는 필수입니다. 생략하면 train.py 가 오류로 멈춥니다 — 조용한 기본값 없음)
+# 데이터: preprocess.py 산출물 datasets/stage1/data.yaml (공개 데이터만, in-domain 미포함)
 # 목적: COCO 사전학습 위에 "와이어/선형 객체" 도메인 지식을 주입 (배포용 아님).
+
+# 무엇을 돌릴지 — 블록 자체가 필수이며, 키를 오타내면 오류로 알려줍니다.
+# stage1 결과는 배포하지 않으므로 export 는 끕니다 (배포는 stage2 에서).
+stages:
+  preview_aug: false
+  train: true
+  export: false
 
 train:
   model: yolo26s-seg.pt      # COCO 사전학습에서 시작 (없으면 Ultralytics가 자동 다운로드)

@@ -1,30 +1,59 @@
 # finetuner
 
-yolo26s-seg 파인튜닝 파이프라인. 코드/설정만 여기 두고, 실제 학습은 RTX 5090 머신에서 돌립니다.
+yolo26s-seg 파인튜닝 파이프라인. 코드/설정만 여기 두고, 실제 학습은 GPU 머신(B200 또는 RTX 5090)에서 돌립니다.
 
 ## 구성
 
-각 단계는 **자기 이름의 config 하나**만 읽습니다 (명령행 인자 없음).
-
 | 파일 | 클래스 | config | 역할 |
 |------|--------|--------|------|
-| `download.py` | `Downloader` | `download_config.yaml` | 공개(Roboflow) 데이터셋 획득 |
-| `preprocess.py` | `Preprocessor` | `preprocess_config.yaml` | 소스별 개별 처리(크롭·리사이즈·클래스 통일·분할·oversample) 후 하나로 병합 |
-| `train.py` | `Trainer` | `train_config.yaml` | 파인튜닝 · 증강 미리보기 · ONNX export |
+| `download.py` | `Downloader` | `download_config.yaml` (자동) | 공개(Roboflow) 데이터셋 획득 |
+| `preprocess.py` | `Preprocessor` | `preprocess_config.yaml` (자동) | 소스별 개별 처리(크롭·리사이즈·클래스 통일·분할·oversample) 후 하나로 병합 |
+| `train.py` | `Trainer` | **`--config` 필수** | 파인튜닝 · 증강 미리보기 · ONNX export |
+| `eval.py` | — | 명령행 인자 | 학습된 checkpoint 를 지정 split 에서 평가 |
 | `common.py` | `Stage` | — | config 로드 · 경로 해석 · 로그 |
-| `selftest.py` | — | — | 크롭 기하 · 폴리곤 클리핑 · 라벨 변환 · 누수 검증 |
+| `selftest.py` | — | — | 크롭 기하 · 폴리곤 클리핑 · 라벨 변환 · 누수 · config 규약 검증 |
 
 ```
-python download.py     →  python preprocess.py  →  python train.py
-   datasets/rf_*/            datasets/processed/       runs/segment/ + 앱 Models/
+python download.py  →  python preprocess.py  →  python train.py --config <yaml>
+   datasets/rf_*/         datasets/processed/      runs/segment/ + 앱 Models/
 ```
 
 각 단계는 import 해서 한 프로세스에서 이어 붙일 수도 있습니다:
 
 ```python
 from download import Downloader; from preprocess import Preprocessor; from train import Trainer
-Downloader().run(); Preprocessor().run(); Trainer().run()
+Downloader().run(); Preprocessor().run(); Trainer("train_config.yaml").run()
 ```
+
+### config 는 명시해야 합니다 (train)
+
+`download`/`preprocess` 는 config 가 하나뿐이라 자기 이름의 yaml 을 자동으로 읽습니다.
+**`train.py` 는 `--config` 없이는 실행되지 않습니다.**
+
+```powershell
+python train.py --config train_config.yaml            # 단일 스테이지
+python train.py --config train_config.stage1.yaml     # 공개 warm-up
+python train.py --config train_config.stage2.yaml     # in-domain 적응
+```
+
+후보가 여러 개인데 기본값을 고르면, 의도와 다른 설정으로 100 epoch 을 돌려도 알아챌 방법이
+없습니다. 그래서 조용한 fallback 을 전부 없앴습니다 — 생략하면 `--config` 가 필수라는 오류와
+함께 후보 목록이 나오고, 이름을 잘못 적어도 traceback 대신 후보를 알려줍니다. 그리고 어느
+단계든 **읽은 config 의 절대경로를 로그 첫 줄에 찍습니다.**
+
+같은 이유로 아래 항목들도 기본값 없이 오류를 냅니다:
+
+| 빠진 것 | 결과 |
+|---------|------|
+| `stages` 블록 | 오류 (예전엔 train·export 가 켜진 것으로 간주됨) |
+| `stages` 의 키 오타 (`expor: true`) | 오류 (조용히 무시하면 export 한 줄 알고 끝남) |
+| `stages` 가 전부 `false` | 오류 (할 일이 없음) |
+| `train.data` | 오류 (`datasets/processed` 로 추측하지 않음) |
+| `train.model` | 오류 (COCO 로 되돌아가 stage1 warm-start 를 날리지 않음) |
+
+`train.model` 에 경로 구분자가 있으면(`runs/segment/stage1/weights/best.pt`) 체크포인트
+파일로 보고 `finetuner/` 기준으로 해석한 뒤 **존재를 확인**합니다. 구분자가 없으면
+(`yolo26s-seg.pt`) Ultralytics 가 받아올 모델 이름이라 그대로 넘깁니다.
 
 ## datasets/ 레이아웃
 
@@ -124,7 +153,7 @@ targets:
 `train_config.yaml` 의 `train:` 블록 안 하이퍼파라미터(`hsv_*`, `scale`, `fliplr`, `mosaic`,
 `copy_paste` …)로 조절합니다. 디스크에 구워두면 다양성이 오히려 줄고 온라인 증강과 이중으로 겹칩니다.
 
-결과 확인:
+결과 확인 — 쓰는 config 의 `stages` 를 이렇게 두고 돌립니다:
 
 ```yaml
 stages:
@@ -138,6 +167,8 @@ stages:
 
 ## 재학습 없이 export 만
 
+쓰는 config 의 `stages` 를 이렇게 두고 `python train.py --config <그 yaml>`:
+
 ```yaml
 stages: { preview_aug: false, train: false, export: true }
 ```
@@ -147,11 +178,23 @@ stages: { preview_aug: false, train: false, export: true }
 
 ## 실행
 
+학습 머신은 B200(sm_100) 또는 RTX 5090(sm_120) — 둘 다 Blackwell 세대라 **CUDA 12.8+ 빌드
+PyTorch(cu128 휠)가 필수**이고, 같은 휠이 두 GPU를 모두 지원하므로 설치 명령은 동일합니다.
+`train_config*.yaml` 의 `batch: -1`(AutoBatch)이 GPU 메모리에 맞춰 배치를 자동으로 잡아주므로
+머신이 바뀌어도 config 는 수정할 필요 없습니다.
+
 ```powershell
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
 python selftest.py       # 파이프라인 자체 검증 (GPU 불필요)
 python preprocess.py
-python train.py
+python train.py --config train_config.yaml
+```
+
+torch 가 GPU 를 제대로 잡았는지 확인:
+
+```powershell
+python -c "import torch; print(torch.__version__, torch.cuda.get_device_name(0))"
 ```
 
 ## roboflow
