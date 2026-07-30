@@ -1,0 +1,10 @@
+1. downloader <- 단일로 합체
+2. proprocessor <- 데이터셋별 정리. 
+    - instance seg model -> obb
+    - no label -> delete
+    - many label -> single
+3. 코드 공간 정리 (개더럽네) -> 좀 표준적으로
+4. preprocess config이 여러개가 좋은가.. 고민좀해보자
+5. 더있나??
+
+
