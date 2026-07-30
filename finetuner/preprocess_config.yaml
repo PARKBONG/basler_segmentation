@@ -1,5 +1,8 @@
-# 데이터셋 구성 설정 — preprocess.py 전용.
-# (명령행 인자 없음. 값은 전부 여기서 수정)
+# 단일 스테이지 데이터셋 구성 — preprocess.py 전용.
+#   python preprocess.py --config preprocess_config.yaml
+# (--config 는 필수입니다. 후보가 단일/stage1/stage2 로 여럿이라 조용한 기본값이 없습니다)
+# 산출물 datasets/processed/data.yaml 은 train_config.yaml 의 train.data 가 읽습니다.
+# 2단계 학습은 preprocess_config.stage1/stage2.yaml 을 쓰세요.
 # 경로는 이 yaml(=finetuner/ 폴더) 기준 상대경로 또는 절대경로.
 #
 # 공개셋을 어디서 받을지는 download_config.yaml 이 소유합니다. 여기서는 이미 디스크에
@@ -37,6 +40,8 @@ sources:
     class_map:                 # 소스클래스명 → 최종클래스명 (여기 없는 소스 클래스는 제외)
       wire: wire
     val_ratio: 0.2             # 20% 를 in-domain 검증셋(val)으로 → 검증은 내 데이터에서만
+    test_ratio: 0.0            # 최종 1회 평가용 test 비율 — 단일 스테이지에선 보통 0
+                               # (논문용 3-way 분할은 preprocess_config.stage2.yaml 참고)
     oversample: 1              # train 강조 배수 (추후 상향 가능)
     crop:
       # 이미지와 폴리곤 라벨을 함께 자릅니다.

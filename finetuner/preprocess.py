@@ -3,14 +3,18 @@
 
 폴더 규약:
 - 원천은 datasets/raw/<이름>/ (kimm = 앱 REC 카메라 원본, rf_* = download.py 공개셋).
-- 산출물은 소스별로 out/<이름>/images|labels/{train,val} 에 씁니다.
+- 산출물은 소스별로 out/<이름>/images|labels/{train,val,test} 에 씁니다.
 - out/data.yaml 하나가 디스크에 있는 소스 산출물 전체를 묶어 train.py 가 읽습니다
-  (Ultralytics 는 train/val 에 폴더 목록을 지원).
+  (Ultralytics 는 각 split 에 폴더 목록을 지원). test 는 있을 때만 키를 넣습니다.
 
 설계 원칙:
-- 로컬(인도메인)은 소스 내부에서 먼저 train/val 분할 → 검증(val)은 로컬에서만 나옴.
-- 공개셋은 val_ratio: 0.0 로 두어 train 전용 (검증 오염 방지).
-- oversample 은 각 소스의 train 쪽에만 물리 복제로 적용 (val 누수 없음).
+- 어떤 데이터셋을 굽는지는 config 가 정합니다 — 단일(processed) / stage1(공개 전용) /
+  stage2(in-domain) 마다 yaml 이 따로 있고, 후보가 여럿이라 --config 로 반드시 명시합니다.
+- 분할(train/val/test)은 소스 내부에서, oversample 전에 그룹(원본) 단위로 나눕니다.
+  Roboflow 증강 사본(..._jpg.rf.<hash>)은 원본 단위로 묶여 같은 split 에만 들어갑니다
+  (근중복이 train/val 에 갈라 들어가는 누수 방지).
+- test 는 test_ratio 로 뗍니다 — 최종 모델에 딱 한 번 쓰는 평가용 (eval.py --split test).
+- oversample 은 각 소스의 train 쪽에만 물리 복제로 적용 (val/test 누수 없음).
 - 클래스 선택/이름통일은 class_map(이름 기반)이 담당 → source index 차이에 안전.
 - 크롭은 이미지와 폴리곤 라벨을 함께 변환합니다. 창 밖으로 나간 인스턴스는 잘리고,
   남은 면적이 min_area 미만이면 인스턴스째 폐기, 살아남은 인스턴스가 하나도 없으면
@@ -30,17 +34,20 @@ train_config.yaml 의 증강 하이퍼파라미터로 조절하고, 결과 확�
   · 로컬(kimm)은 최소 형식으로 하나 작성:  names: {0: wire}\n train: images
 
 사용법:
-    python preprocess.py
+    python preprocess.py --config preprocess_config.yaml          # 단일 스테이지
+    python preprocess.py --config preprocess_config.stage1.yaml   # stage1 (공개 전용)
+    python preprocess.py --config preprocess_config.stage2.yaml   # stage2 (in-domain)
 """
 from __future__ import annotations
 
+import argparse
 import random
 import shutil
 from pathlib import Path
 
 import yaml
 
-from common import IMG_EXTS, Stage, normalize_names
+from common import HERE, IMG_EXTS, Stage, normalize_names
 
 
 # ── 크롭 기하 (순수 함수 — selftest.py 가 직접 검증) ─────────────────────────
@@ -199,7 +206,9 @@ def transform_label(line: str, src_w: int, src_h: int,
 class Preprocessor(Stage):
     """소스들을 소스별 산출물 + 통합 data.yaml 의 학습용 데이터셋으로 만드는 단계."""
 
-    config_name = "preprocess_config.yaml"
+    config_name = "preprocess_config.yaml"   # 오류 메시지의 예시일 뿐, 자동 선택 안 함
+    config_glob = "preprocess_config*.yaml"
+    explicit_config = True
     label = "preprocess"
 
     def __init__(self, config_path=None) -> None:
@@ -436,7 +445,7 @@ class Preprocessor(Stage):
         preview_dir.mkdir(parents=True, exist_ok=True)
 
         written = 0
-        for split in ("train", "val"):
+        for split in ("train", "val", "test"):
             images = []
             for sub in sorted(d for d in self.out.iterdir()
                               if d.is_dir() and d.name != "_preview"):
@@ -466,7 +475,7 @@ class Preprocessor(Stage):
 
     # -- 실행 ------------------------------------------------------------
 
-    def write_data_yaml(self) -> tuple[list, list]:
+    def write_data_yaml(self) -> tuple[list, list, list]:
         """디스크에 있는 소스 산출물 전체를 묶는 out/data.yaml 을 다시 쓴다."""
         def has_images(d: Path) -> bool:
             return d.is_dir() and any(p.suffix.lower() in IMG_EXTS for p in d.iterdir())
@@ -477,6 +486,8 @@ class Preprocessor(Stage):
                  if has_images(self.out / n / "images/train")]
         val = [f"{n}/images/val" for n in all_names
                if has_images(self.out / n / "images/val")]
+        test = [f"{n}/images/test" for n in all_names
+                if has_images(self.out / n / "images/test")]
 
         stale = sorted(d.name for d in self.out.iterdir()
                        if d.is_dir() and d.name != "_preview" and d.name not in all_names)
@@ -490,13 +501,23 @@ class Preprocessor(Stage):
             "val": val,
             "names": self.final_names,
         }
+        if test:   # test 는 선택 사항 — 없으면 키 자체를 넣지 않음 (빈 리스트 금지)
+            data_yaml["test"] = test
         with (self.out / "data.yaml").open("w", encoding="utf-8") as f:
             yaml.safe_dump(data_yaml, f, allow_unicode=True, sort_keys=False)
-        return train, val
+        return train, val, test
+
+    @staticmethod
+    def split_group(stem: str) -> str:
+        """
+        train/val 분할의 그룹 키. Roboflow export 는 같은 원본의 증강 사본을
+        `<원본>_jpg.rf.<hash>` 이름으로 여러 split 에 흩어 놓으므로, `.rf.` 앞부분으로
+        묶어 근중복이 train/val 에 갈라 들어가는 누수를 막습니다. 그 외 파일은
+        stem 자체가 그룹(= 이미지 단위 분할)입니다.
+        """
+        return stem.split(".rf.")[0] if ".rf." in stem else stem
 
     def run(self) -> None:
-        rng = random.Random(self.cfg.get("seed", 0))
-
         sources = self.selected_sources()
         all_names = [s["name"] for s in (self.cfg.get("sources") or [])]
         if len(sources) != len(all_names):
@@ -504,11 +525,11 @@ class Preprocessor(Stage):
                      f"— 전체 {len(all_names)}개 중. 이 소스만 다시 굽고, "
                      f"다른 소스의 기존 산출물은 유지됩니다.")
 
-        n_train = n_val = 0
+        n_train = n_val = n_test = 0
         for src in sources:
             out_dir = self.out / src["name"]
-            dirs = {sp: out_dir / f"images/{sp}" for sp in ("train", "val")}
-            lbls = {sp: out_dir / f"labels/{sp}" for sp in ("train", "val")}
+            dirs = {sp: out_dir / f"images/{sp}" for sp in ("train", "val", "test")}
+            lbls = {sp: out_dir / f"labels/{sp}" for sp in ("train", "val", "test")}
             for d in (*dirs.values(), *lbls.values()):
                 self.clear_dir(d)  # 이 소스의 산출물만 비움 (재실행 시 깨끗하게)
 
@@ -518,29 +539,45 @@ class Preprocessor(Stage):
                 continue
 
             val_ratio = float(src.get("val_ratio", 0.0))
+            test_ratio = float(src.get("test_ratio", 0.0))
             oversample = max(1, int(src.get("oversample", 1)))
 
-            # 소스 내부에서 먼저 train/val 분할 → oversample 전에 나눠 val 누수 차단
-            idx = list(range(len(items)))
-            rng.shuffle(idx)
-            n_val_src = int(round(len(items) * val_ratio))
-            val_idx = set(idx[:n_val_src])
+            # 소스 내부에서 먼저 train/val/test 분할 → oversample 전에 나눠 누수 차단.
+            # 시드는 소스별로 파생 — 소스를 추가/제거해도 다른 소스의 분할이 안 바뀜.
+            # 그룹(원본) 단위로 val → test 순서로 채우고, 남는 그룹이 전부 train.
+            rng = random.Random(f"{self.cfg.get('seed', 0)}:{src['name']}")
+            groups: dict = {}
+            for i, (img, _, _) in enumerate(items):
+                groups.setdefault(self.split_group(img.stem), []).append(i)
+            keys = sorted(groups)
+            rng.shuffle(keys)
 
-            src_train = 0
+            split_of = {i: "train" for i in range(len(items))}
+            ki = 0
+            for sp, want in (("val", int(round(len(items) * val_ratio))),
+                             ("test", int(round(len(items) * test_ratio)))):
+                have = 0
+                while have < want and ki < len(keys):
+                    for i in groups[keys[ki]]:
+                        split_of[i] = sp
+                    have += len(groups[keys[ki]])
+                    ki += 1
+
+            counts = {"train": 0, "val": 0, "test": 0}
             for i, item in enumerate(items):
-                split = "val" if i in val_idx else "train"
-                reps = 1 if split == "val" else oversample  # oversample 은 train 만
+                split = split_of[i]
+                reps = oversample if split == "train" else 1  # oversample 은 train 만
                 self.write_item(src, item, split, reps, dirs, lbls)
-                if split == "train":
-                    src_train += reps
+                counts[split] += reps
 
-            n_train += src_train
-            n_val += n_val_src
+            n_train += counts["train"]
+            n_val += counts["val"]
+            n_test += counts["test"]
             how = self.crop_summary(self.crop_config(src))
-            self.log(f"{src['name']}: train +{src_train} (oversample x{oversample}), "
-                     f"val +{n_val_src}  [{how}]")
+            self.log(f"{src['name']}: train +{counts['train']} (oversample x{oversample}), "
+                     f"val +{counts['val']}, test +{counts['test']}  [{how}]")
 
-        train_dirs, val_dirs = self.write_data_yaml()
+        train_dirs, val_dirs, test_dirs = self.write_data_yaml()
 
         if self._dropped_instances or self._dropped_empty:
             self.log(f"크롭으로 폐기된 인스턴스 {self._dropped_instances}개 "
@@ -557,13 +594,37 @@ class Preprocessor(Stage):
             self.write_preview(int(preview.get("count", 12)))
 
         self.log(f"완료 → {self.out}")
-        self.log(f"이번 실행: train {n_train}장, val {n_val}장 (val = 로컬 인도메인)")
-        self.log(f"data.yaml 에 묶인 소스 폴더: train {len(train_dirs)}개, val {len(val_dirs)}개")
-        if not val_dirs:
-            self.log("주의: val 산출물이 없습니다 — 인도메인 소스(kimm)를 처리해야 검증이 됩니다.")
+        self.log(f"이번 실행: train {n_train}장, val {n_val}장, test {n_test}장")
+        self.log(f"data.yaml 에 묶인 소스 폴더: train {len(train_dirs)}개, val {len(val_dirs)}개"
+                 + (f", test {len(test_dirs)}개" if test_dirs else ""))
         self.log(f"data.yaml: {self.out / 'data.yaml'}")
-        self.log("다음: python train.py")
+        if not val_dirs:
+            # 빈 val 로 학습에 들어가면 Ultralytics 가 데이터셋 빌드에서 죽습니다.
+            # 산출물은 이미 다 썼으므로 여기서 멈춰도 이번 작업은 보존됩니다.
+            raise SystemExit(
+                f"[{self.label}] val 산출물이 하나도 없습니다 — 이 data.yaml 로 train.py 를 "
+                f"돌리면 빈 검증셋으로 죽습니다.\n"
+                f"  val_ratio > 0 인 소스를 처리해 val 을 만들어 두세요 "
+                f"(단일/stage2 는 인도메인 kimm, stage1 은 공개셋에서 뗍니다).\n"
+                f"  (targets 로 일부만 굽는 중이었다면 먼저 전체를 한 번 처리해야 합니다. "
+                f"이번에 만든 train 산출물은 그대로 유지됩니다.)"
+            )
+        self.log("다음: python train.py --config <train_config*.yaml>")
+
+
+def main() -> None:
+    found = sorted(p.name for p in HERE.glob(Preprocessor.config_glob))
+    ap = argparse.ArgumentParser(
+        description="공개 + 로컬 데이터를 학습용 YOLO seg 데이터셋으로 전처리",
+        epilog="finetuner/ 의 config 후보: " + (", ".join(found) or "(없음)"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument(
+        "--config", required=True, metavar="YAML",
+        help="데이터셋 구성 yaml (필수 — 기본값 없음). finetuner/ 기준 상대경로 또는 절대경로",
+    )
+    Preprocessor(ap.parse_args().config).run()
 
 
 if __name__ == "__main__":
-    Preprocessor().run()
+    main()

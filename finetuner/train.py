@@ -63,8 +63,8 @@ class Trainer(Stage):
         if not path.exists():
             raise FileNotFoundError(
                 f"데이터셋 정의가 없습니다: {path}\n"
-                f"먼저 python preprocess.py 로 데이터셋을 만드세요 "
-                f"(공개셋은 python download.py 선행)."
+                f"먼저 python preprocess.py --config <preprocess_config*.yaml> 로 "
+                f"데이터셋을 만드세요 (공개셋은 python download.py 선행)."
             )
         return path
 

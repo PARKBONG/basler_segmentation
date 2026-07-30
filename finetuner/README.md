@@ -7,33 +7,42 @@ yolo26s-seg 파인튜닝 파이프라인. 코드/설정만 여기 두고, 실제
 | 파일 | 클래스 | config | 역할 |
 |------|--------|--------|------|
 | `download.py` | `Downloader` | `download_config.yaml` (자동) | 공개(Roboflow) 데이터셋 획득 |
-| `preprocess.py` | `Preprocessor` | `preprocess_config.yaml` (자동) | 소스별 개별 처리(크롭·리사이즈·클래스 통일·분할·oversample) 후 하나로 병합 |
+| `preprocess.py` | `Preprocessor` | **`--config` 필수** | 소스별 개별 처리(크롭·리사이즈·클래스 통일·train/val/test 분할·oversample) 후 하나로 병합 |
 | `train.py` | `Trainer` | **`--config` 필수** | 파인튜닝 · 증강 미리보기 · ONNX export |
 | `eval.py` | — | 명령행 인자 | 학습된 checkpoint 를 지정 split 에서 평가 |
 | `common.py` | `Stage` | — | config 로드 · 경로 해석 · 로그 |
 | `selftest.py` | — | — | 크롭 기하 · 폴리곤 클리핑 · 라벨 변환 · 누수 · config 규약 검증 |
 
 ```
-python download.py    →  python preprocess.py       →  python train.py --config <yaml>
-   datasets/raw/rf_*/     datasets/processed/<소스>/    runs/segment/ + 앱 Models/
+python download.py    →  python preprocess.py --config <yaml>  →  python train.py --config <yaml>
+   datasets/raw/rf_*/     datasets/{processed,stage1,stage2}/      runs/segment/ + 앱 Models/
 ```
 
 각 단계는 import 해서 한 프로세스에서 이어 붙일 수도 있습니다:
 
 ```python
 from download import Downloader; from preprocess import Preprocessor; from train import Trainer
-Downloader().run(); Preprocessor().run(); Trainer("train_config.yaml").run()
+Downloader().run(); Preprocessor("preprocess_config.yaml").run(); Trainer("train_config.yaml").run()
 ```
 
-### config 는 명시해야 합니다 (train)
+### config 는 명시해야 합니다 (preprocess · train)
 
-`download`/`preprocess` 는 config 가 하나뿐이라 자기 이름의 yaml 을 자동으로 읽습니다.
-**`train.py` 는 `--config` 없이는 실행되지 않습니다.**
+`download` 는 config 가 하나뿐이라 자기 이름의 yaml 을 자동으로 읽습니다.
+**`preprocess.py` 와 `train.py` 는 후보가 여럿(단일/stage1/stage2)이라 `--config`
+없이는 실행되지 않습니다.** preprocess 와 train 의 yaml 은 1:1 로 짝을 이룹니다:
 
 ```powershell
-python train.py --config train_config.yaml            # 단일 스테이지
-python train.py --config train_config.stage1.yaml     # 공개 warm-up
-python train.py --config train_config.stage2.yaml     # in-domain 적응
+# 단일 스테이지
+python preprocess.py --config preprocess_config.yaml
+python train.py      --config train_config.yaml
+
+# 2단계 학습 (논문 프로토콜): stage1 = 공개 warm-up, stage2 = in-domain 적응
+python preprocess.py --config preprocess_config.stage1.yaml
+python train.py      --config train_config.stage1.yaml
+python preprocess.py --config preprocess_config.stage2.yaml
+python train.py      --config train_config.stage2.yaml
+python eval.py --weights runs/segment/stage2/weights/best.pt `
+               --data ../datasets/stage2/data.yaml --split test   # 최종 1회만
 ```
 
 후보가 여러 개인데 기본값을 고르면, 의도와 다른 설정으로 100 epoch 을 돌려도 알아챌 방법이
@@ -68,11 +77,18 @@ datasets/
       labels/         라벨링 결과 (YOLO seg 폴리곤)
       data.yaml
     rf_*/             download.py 가 받은 공개셋 (내부는 Roboflow export 규약 그대로)
-  processed/          preprocess.py 산출물 (+ _preview/)
+  processed/          preprocess_config.yaml 산출물 (단일 스테이지, + _preview/)
     data.yaml         소스 산출물 전체를 묶는 학습용 정의 = train.py 가 읽는 파일
-    kimm/             images|labels/{train,val}
-    rf_*/             images|labels/{train,val}
+    kimm/             images|labels/{train,val,test}   (test 는 test_ratio > 0 일 때만)
+    rf_*/             images|labels/{train,val,test}
+  stage1/             preprocess_config.stage1.yaml 산출물 (공개 전용 — 공개 val 포함)
+  stage2/             preprocess_config.stage2.yaml 산출물 (in-domain — val + 최종 test)
 ```
+
+2단계 학습에서는 데이터셋도 두 벌입니다 — `stage1/` 은 공개 데이터만(warm-up + 공개 val),
+`stage2/` 는 in-domain 만(train/val/test). in-domain `test` 는 최종 stage2 모델에
+**딱 한 번** 씁니다 (`eval.py --split test`). data.yaml 의 `test:` 키는 test 산출물이
+있을 때만 생깁니다.
 
 `kimm` 의 라벨링만 수동 단계입니다. `raw/kimm/data.yaml` 은 두 줄이면 됩니다:
 
@@ -88,14 +104,16 @@ train: images
 
 ## 소스별 개별 처리
 
-`preprocess_config.yaml` 의 `sources:` 항목 하나가 곧 데이터셋 하나이고, 인자를 각자 가집니다:
+`preprocess_config*.yaml` 의 `sources:` 항목 하나가 곧 데이터셋 하나이고, 인자를 각자 가집니다
+(단일/stage1/stage2 세 yaml 모두 같은 스키마입니다):
 
 | 인자 | 뜻 |
 |------|-----|
 | `path` | 소스 폴더 (`data.yaml` + `images/…` + `labels/…`) |
 | `class_map` | 소스클래스명 → 최종클래스명. 여기 없는 클래스는 버림 |
-| `val_ratio` | 이 소스에서 val 로 뗄 비율. 공개셋은 `0.0` (검증 오염 방지) |
-| `oversample` | train 쪽 물리 복제 배수 (val 에는 적용 안 됨) |
+| `val_ratio` | 이 소스에서 val 로 뗄 비율. 단일/stage2 에서 공개셋은 `0.0` (검증 오염 방지) |
+| `test_ratio` | 최종 1회 평가용 test 비율. 보통 stage2 의 kimm 에만 `> 0` |
+| `oversample` | train 쪽 물리 복제 배수 (val/test 에는 적용 안 됨) |
 | `crop` | 아래 참고. 소스마다 켜고 끌 수 있음 |
 | `resize` | 크롭 후 리사이즈. `null` 이면 그대로 |
 
@@ -196,7 +214,7 @@ PyTorch(cu128 휠)가 필수**이고, 같은 휠이 두 GPU를 모두 지원하�
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
 python selftest.py       # 파이프라인 자체 검증 (GPU 불필요)
-python preprocess.py
+python preprocess.py --config preprocess_config.yaml
 python train.py --config train_config.yaml
 ```
 

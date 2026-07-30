@@ -4,12 +4,13 @@
 config 가 하나뿐인 단계는 자기 이름의 yaml 을 읽습니다 (명령행 인자 없음):
 
     download.py    → download_config.yaml     공개셋 획득
-    preprocess.py  → preprocess_config.yaml   병합 + 크롭 (+ 라벨 변환)
 
-train 은 config 가 여럿(단일/stage1/stage2)이라 **반드시 명시**해야 합니다. 기본값으로
-조용히 넘어가면 의도한 것과 다른 설정으로 학습해도 알 수 없기 때문입니다:
+preprocess 와 train 은 config 가 여럿(단일/stage1/stage2)이라 **반드시 명시**해야
+합니다. 기본값으로 조용히 넘어가면 의도한 것과 다른 데이터/설정으로 학습해도 알 수
+없기 때문입니다:
 
-    train.py --config train_config.stage1.yaml   학습 + ONNX export
+    preprocess.py --config preprocess_config.stage1.yaml   데이터셋 굽기
+    train.py      --config train_config.stage1.yaml        학습 + ONNX export
 
 어느 쪽이든 읽은 config 경로는 항상 로그 첫 줄에 찍습니다.
 경로는 모두 이 폴더(finetuner/) 기준 상대경로이거나 절대경로입니다.
@@ -49,11 +50,6 @@ def roboflow_api_key() -> str:
             "  bash:        export ROBOFLOW_API_KEY=xxxx"
         )
     return key
-
-
-def count_images(root: Path) -> int:
-    """폴더 아래 이미지 파일 수 (업로드 전 규모 확인용)."""
-    return sum(1 for p in root.rglob("*") if p.suffix.lower() in IMG_EXTS)
 
 
 def normalize_names(names) -> dict:

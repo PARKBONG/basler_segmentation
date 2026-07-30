@@ -21,16 +21,10 @@ Stage1/Stage2 를 명확히, 독립적으로 평가하기 위한 스크립트 (B
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 from ultralytics import YOLO
 
-HERE = Path(__file__).resolve().parent
-
-
-def resolve(path_str: str) -> Path:
-    p = Path(path_str)
-    return p if p.is_absolute() else (HERE / p)
+from common import resolve
 
 
 def _fmt(obj, name) -> str:

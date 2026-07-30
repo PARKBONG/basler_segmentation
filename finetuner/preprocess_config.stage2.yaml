@@ -1,0 +1,49 @@
+# Stage 2 (in-domain 적응) 데이터셋 구성 — preprocess.py 전용.
+#   python preprocess.py --config preprocess_config.stage2.yaml
+# 산출물 datasets/stage2/data.yaml 은 train_config.stage2.yaml 의 train.data 가 읽습니다.
+#
+# in-domain(kimm)만 포함합니다 (train/val/test = 전부 인도메인).
+#   val  → stage2 학습 중 선택 지표.
+#   test → 최종 stage2 모델에 딱 한 번 (python eval.py --split test).
+#          이 수치를 보고 하이퍼파라미터를 다시 만지면 그 순간 오염됩니다.
+# 분할은 그룹(원본) 단위 + 소스별 시드라 재실행해도 같은 이미지가 같은 split 에 갑니다.
+
+# 최종 통합 클래스 — index가 최종 class id. class_map의 목적지 이름은 반드시 여기 존재해야 함.
+names:
+  0: wire
+
+# 비움 = sources 전체 처리. 일부만 다시 구울 때 이름을 적으세요.
+targets: []
+
+sources:
+  # 내 카메라 원본 (비공개, 인도메인). 앱(BaslerLiveView)의 REC 가 크롭 전 풀사이즈 PNG 를
+  # images/ 에 쌓습니다. 라벨링 결과를 labels/ 에 넣고 data.yaml 을 두 줄로:
+  #     names: {0: wire}
+  #     train: images
+  - name: kimm
+    path: ../datasets/raw/kimm
+    class_map:
+      wire: wire
+    val_ratio: 0.2             # 선택 지표용 in-domain val
+    test_ratio: 0.1            # 최종 1회 평가용 in-domain test
+    oversample: 1
+    crop:
+      # 크롭 규약은 preprocess_config.yaml 의 kimm 블록과 동일 (앱 FrameCropper 와 같은 %)
+      enabled: true
+      width: 640
+      height: 640
+      center_x: 50
+      center_y: 50
+      auto_crop:
+        enabled: false
+        margin: 0.25
+        min_size: 640
+      min_area: 0.10
+    resize: null
+
+out: ../datasets/stage2        # 소스별로 out/<이름>/, out/data.yaml 이 전체를 묶습니다
+seed: 0
+
+preview:
+  enabled: true
+  count: 12

@@ -7,10 +7,12 @@
   3. 폴리곤 클리핑 (clip_polygon)   — 완전 포함 / 완전 배제 / 부분 걸침
   4. 라벨 변환 (transform_label)    — 재정규화 좌표, min_area 폐기, 비폴리곤 폐기
   5. Preprocessor 전체              — 합성 데이터셋으로 소스별 산출물·분할·oversample·크롭
-                                      + val 누수 없음 + class_map 필터 + 통합 data.yaml
-                                      + targets 필터 + 증분 재굽기 + auto_crop 산출물
-  6. Trainer config 규약            — config 명시 강제(조용한 fallback 금지),
-                                      stages/데이터/가중치 누락·오타 시 즉시 오류
+                                      + val/test 누수 없음 (그룹 단위 3-way 분할)
+                                      + class_map 필터 + 통합 data.yaml + targets 필터
+                                      + 증분 재굽기 + auto_crop 산출물 + val 없으면 오류
+  6. config 규약 (preprocess/train) — config 명시 강제(조용한 fallback 금지),
+                                      저장소 yaml 린트, stages/데이터/가중치 누락·오타 시
+                                      즉시 오류
 
 필요: pyyaml, pillow  (ultralytics/torch 는 필요 없음)
 
@@ -202,7 +204,7 @@ def make_source(root: Path, name: str, count: int, size: int,
 
 
 def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False,
-                   targets: list | None = None) -> dict:
+                   targets: list | None = None, test_ratio: float = 0.0) -> dict:
     """합성 소스 2개로 Preprocessor 를 돌리고 그 인스턴스를 돌려준다(집계값 확인용)."""
     # 중앙에 붙은 사각형 하나 + (junk 클래스) 구석에 하나
     def local_lines(i):
@@ -221,8 +223,8 @@ def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False,
         "targets": targets or [],
         "sources": [
             {"name": "kimm", "path": str(root / "kimm"),
-             "class_map": {"wire": "wire"}, "val_ratio": 0.2, "oversample": 2,
-             "crop": crop},
+             "class_map": {"wire": "wire"}, "val_ratio": 0.2,
+             "test_ratio": test_ratio, "oversample": 2, "crop": crop},
             {"name": "rf_a", "path": str(root / "pub"),
              "class_map": {"cable": "wire"}, "val_ratio": 0.0, "oversample": 1,
              "crop": crop},
@@ -281,6 +283,8 @@ def test_pipeline_no_crop(root: Path) -> None:
           data["train"] == ["kimm/images/train", "rf_a/images/train"]
           and data["val"] == ["kimm/images/val"]
           and data["names"] == {0: "wire"}, str(data))
+    check("pipeline: test_ratio 0 이면 data.yaml 에 test 키 없음", "test" not in data,
+          str(data.get("test")))
 
 
 def test_pipeline_crop(root: Path) -> None:
@@ -351,16 +355,22 @@ def test_pipeline_auto_crop(root: Path) -> None:
 
 def test_pipeline_targets(root: Path) -> None:
     out = root / "out_targets"
-    run_preprocess(root / "srcE", out, {"enabled": False}, targets=["rf_a"])
+    # val_ratio 0 소스만 처리하면 val 이 비는데, 그 data.yaml 로 학습하면 Ultralytics 가
+    # 빈 검증셋 빌드에서 죽습니다 → preprocess 단계에서 SystemExit 로 미리 막아야 함.
+    expect_raises("targets: val 산출물 없으면 SystemExit",
+                  SystemExit,
+                  lambda: run_preprocess(root / "srcE", out, {"enabled": False},
+                                         targets=["rf_a"]),
+                  "val 산출물")
 
+    # 막더라도 이번에 만든 산출물과 data.yaml 은 보존되어야 함 (증분 워크플로 유지)
     train_imgs = sorted((out / "rf_a/images/train").glob("*.png"))
-    check("targets: 지정한 소스만 처리", len(train_imgs) == 6, f"{len(train_imgs)}")
+    check("targets: 지정한 소스만 처리(산출물 보존)", len(train_imgs) == 6, f"{len(train_imgs)}")
     check("targets: 빠진 소스는 산출물에 없음", not (out / "kimm").exists())
 
     data = yaml.safe_load((out / "data.yaml").read_text(encoding="utf-8"))
     check("targets: data.yaml 은 있는 산출물만",
           data["train"] == ["rf_a/images/train"], str(data["train"]))
-    check("targets: val_ratio 0 소스만이면 val 은 빔", data["val"] == [], str(data["val"]))
 
     # 없는 이름은 조용히 넘어가지 않고 바로 알려줘야 함
     try:
@@ -385,6 +395,41 @@ def test_pipeline_incremental(root: Path) -> None:
     check("incremental: data.yaml 은 디스크 전체를 다시 묶음",
           data["train"] == ["kimm/images/train", "rf_a/images/train"]
           and data["val"] == ["kimm/images/val"], str(data))
+
+
+def test_split_group() -> None:
+    """Roboflow 증강 사본이 원본 단위로 묶여 근중복 누수를 막는지."""
+    check("split_group: rf 사본은 원본 stem 으로",
+          Preprocessor.split_group("frame12_jpg.rf.a1b2c3") == "frame12_jpg")
+    check("split_group: 같은 원본의 사본은 같은 그룹",
+          Preprocessor.split_group("frame12_jpg.rf.xxxx")
+          == Preprocessor.split_group("frame12_jpg.rf.yyyy"))
+    check("split_group: 일반 stem 은 그대로",
+          Preprocessor.split_group("IMG_0042") == "IMG_0042")
+
+
+def test_pipeline_three_way(root: Path) -> None:
+    """test_ratio 로 3-way 분할 — 그룹 무결성 + oversample 격리 + data.yaml test 키."""
+    out = root / "out_3way"
+    run_preprocess(root / "srcH", out, {"enabled": False}, test_ratio=0.2)
+
+    tr = sorted((out / "kimm/images/train").glob("*.png"))
+    va = sorted((out / "kimm/images/val").glob("*.png"))
+    te = sorted((out / "kimm/images/test").glob("*.png"))
+    # kimm 10장: val 2 (0.2), test 2 (0.2), train 6 × oversample 2 = 12
+    check("3way: 장수 (train 6x2, val 2, test 2)",
+          len(tr) == 12 and len(va) == 2 and len(te) == 2,
+          f"train={len(tr)} val={len(va)} test={len(te)}")
+    check("3way: test 에 oversample 사본 없음", not any("_os" in p.name for p in te))
+
+    def origin(p): return p.name.split("_os")[0]
+    otr, ova, ote = ({origin(p) for p in s} for s in (tr, va, te))
+    check("3way: train/val/test 원본 겹침 없음",
+          not (otr & ova) and not (otr & ote) and not (ova & ote))
+
+    data = yaml.safe_load((out / "data.yaml").read_text(encoding="utf-8"))
+    check("3way: data.yaml 에 test 목록", data.get("test") == ["kimm/images/test"],
+          str(data.get("test")))
 
 
 # ── 6. Trainer config 규약 ──────────────────────────────────────────────────
@@ -480,6 +525,37 @@ def test_trainer_data_and_weights(root: Path) -> None:
     check("model: 있는 checkpoint 는 절대경로로", Trainer(p).start_weights() == str(ckpt))
 
 
+def test_preprocess_config_required() -> None:
+    """preprocess 도 config 후보가 여럿(단일/stage1/stage2) → 생략은 오류."""
+    expect_raises("preprocess: config 생략은 SystemExit", SystemExit, Preprocessor, "명시")
+    check("preprocess: config 후보 목록",
+          "preprocess_config.stage1.yaml" in Preprocessor.config_candidates(),
+          Preprocessor.config_candidates())
+
+
+def test_real_preprocess_configs() -> None:
+    """저장소의 preprocess_config*.yaml 3벌이 모두 규약을 지키는지 (config 린트)."""
+    names = sorted(p.name for p in HERE.glob(Preprocessor.config_glob))
+    required = {"preprocess_config.yaml", "preprocess_config.stage1.yaml",
+                "preprocess_config.stage2.yaml"}
+    check("preprocess configs: 단일/stage1/stage2 존재", required <= set(names),
+          ", ".join(names))
+
+    outs = {}
+    for name in names:
+        st = Preprocessor(name)
+        srcs = st.cfg.get("sources") or []
+        check(f"config {name}: names/sources/out",
+              bool(st.cfg.get("names")) and bool(srcs) and bool(st.cfg.get("out")))
+        # val 이 없으면 run() 이 SystemExit 로 막으므로, config 부터 걸러낸다
+        check(f"config {name}: val_ratio > 0 소스 존재",
+              any(float(s.get("val_ratio", 0)) > 0 for s in srcs))
+        outs[name] = str(st.cfg.get("out"))
+    check("preprocess configs: 단일/stage1/stage2 out 이 전부 다름",
+          len({outs[n] for n in required if n in outs}) == len(required & set(names)),
+          str(outs))
+
+
 def test_real_train_configs() -> None:
     """저장소에 있는 train_config*.yaml 이 모두 규약을 지키는지 (config 린트)."""
     names = sorted(p.name for p in HERE.glob(Trainer.config_glob))
@@ -506,6 +582,7 @@ def main() -> int:
     test_auto_crop_rect()
     test_clip_polygon()
     test_transform_label()
+    test_split_group()
 
     root = Path(tempfile.mkdtemp(prefix="finetuner_selftest_"))
     try:
@@ -514,6 +591,9 @@ def main() -> int:
         test_pipeline_auto_crop(root)
         test_pipeline_targets(root)
         test_pipeline_incremental(root)
+        test_pipeline_three_way(root)
+        test_preprocess_config_required()
+        test_real_preprocess_configs()
         test_trainer_config_required(root)
         test_trainer_stages_guard(root)
         test_trainer_data_and_weights(root)
