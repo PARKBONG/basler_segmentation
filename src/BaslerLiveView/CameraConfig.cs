@@ -38,9 +38,10 @@ public sealed class CameraConfig
 
     /// <summary>Where the Record button writes PNGs (full sensor resolution, uncropped).
     /// Relative paths are anchored at the repo root (see
-    /// <see cref="FrameRecorder.ResolveDirectory"/>). The default is the <c>raw</c>
-    /// source that finetuner/preprocess.py reads.</summary>
-    public string RecordDir { get; set; } = "datasets/raw/images/train";
+    /// <see cref="FrameRecorder.ResolveDirectory"/>). The default is the <c>kimm</c>
+    /// raw source that finetuner/preprocess.py reads (labels go beside it in
+    /// <c>datasets/raw/kimm/labels</c>).</summary>
+    public string RecordDir { get; set; } = "datasets/raw/kimm/images";
 
     /// <summary>How many frames per second Record saves. Consecutive grabs are nearly
     /// identical, so the grab stream is sampled down to something worth labelling.

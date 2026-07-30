@@ -14,8 +14,8 @@ yolo26s-seg 파인튜닝 파이프라인. 코드/설정만 여기 두고, 실제
 | `selftest.py` | — | — | 크롭 기하 · 폴리곤 클리핑 · 라벨 변환 · 누수 · config 규약 검증 |
 
 ```
-python download.py  →  python preprocess.py  →  python train.py --config <yaml>
-   datasets/rf_*/         datasets/processed/      runs/segment/ + 앱 Models/
+python download.py    →  python preprocess.py       →  python train.py --config <yaml>
+   datasets/raw/rf_*/     datasets/processed/<소스>/    runs/segment/ + 앱 Models/
 ```
 
 각 단계는 import 해서 한 프로세스에서 이어 붙일 수도 있습니다:
@@ -57,23 +57,28 @@ python train.py --config train_config.stage2.yaml     # in-domain 적응
 
 ## datasets/ 레이아웃
 
-전부 `.gitignore` 대상입니다 (용량).
+전부 `.gitignore` 대상입니다 (용량). 규약: **원천은 `raw/<소스이름>/`, 산출물은
+`processed/<소스이름>/`** — 양쪽에서 같은 이름을 씁니다.
 
 ```
 datasets/
-  raw/         내 카메라 원본 (인도메인)
-    images/train/    앱(BaslerLiveView)의 REC 가 쌓는 크롭 전 풀사이즈 PNG
-    labels/train/    라벨링 결과 (YOLO seg 폴리곤)
-    data.yaml
-  rf_*/        download.py 가 받은 공개셋
-  processed/   preprocess.py 산출물 = train.py 가 읽는 곳 (+ _preview/)
+  raw/                원천 데이터 (소스별 폴더)
+    kimm/             내 카메라 원본 (인도메인)
+      images/         앱(BaslerLiveView)의 REC 가 쌓는 크롭 전 풀사이즈 PNG
+      labels/         라벨링 결과 (YOLO seg 폴리곤)
+      data.yaml
+    rf_*/             download.py 가 받은 공개셋 (내부는 Roboflow export 규약 그대로)
+  processed/          preprocess.py 산출물 (+ _preview/)
+    data.yaml         소스 산출물 전체를 묶는 학습용 정의 = train.py 가 읽는 파일
+    kimm/             images|labels/{train,val}
+    rf_*/             images|labels/{train,val}
 ```
 
-`raw` 의 라벨링만 수동 단계입니다. `raw/data.yaml` 은 두 줄이면 됩니다:
+`kimm` 의 라벨링만 수동 단계입니다. `raw/kimm/data.yaml` 은 두 줄이면 됩니다:
 
 ```yaml
 names: {0: wire}
-train: images/train
+train: images
 ```
 
 앱은 **크롭하지 않은 원본**을 저장합니다. 크롭은 폴리곤 라벨까지 함께 잘라야 하므로
@@ -95,7 +100,7 @@ train: images/train
 | `resize` | 크롭 후 리사이즈. `null` 이면 그대로 |
 
 크롭 인자에 **공유 기본값은 없습니다** — 소스마다 자기 `crop` 블록이 전부입니다.
-`raw` 는 풀사이즈라 640 크롭을 켜고, 공개셋은 이미 잘려 있어 `enabled: false` 로 두는 식입니다.
+`kimm` 은 풀사이즈라 640 크롭을 켜고, 공개셋은 이미 잘려 있어 `enabled: false` 로 두는 식입니다.
 
 ### 처리할 소스 고르기 (`targets`)
 
@@ -103,12 +108,15 @@ train: images/train
 
 ```yaml
 targets:
-  - raw
+  - kimm
   - rf_a
 ```
 
-산출물 폴더는 매 실행마다 비우고 다시 쓰므로, **`targets` 에 적은 소스만 학습셋에 남습니다**
-(특정 소스만 빼고 다시 굽고 싶을 때 쓰세요). 없는 이름을 적으면 바로 오류로 알려줍니다.
+산출물이 소스별 폴더(`processed/<이름>/`)라서 **`targets` 에 적은 소스만 다시 굽고,
+다른 소스의 기존 산출물은 그대로 유지됩니다** (한 소스만 설정을 바꿔 다시 굽는 용도).
+`processed/data.yaml` 은 매 실행마다 디스크에 있는 소스 산출물 전체를 다시 묶습니다 —
+학습셋에서 소스를 빼려면 `processed/<이름>/` 폴더를 지우세요. `targets` 에 없는 이름을
+적으면 바로 오류로 알려줍니다.
 
 ## 크롭
 

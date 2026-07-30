@@ -1,5 +1,11 @@
 """
-공개 + 로컬 데이터를 하나의 YOLO seg 데이터셋으로 전처리(병합 · 크롭 · 리사이즈).
+공개 + 로컬 데이터를 학습용 YOLO seg 데이터셋으로 전처리(크롭 · 리사이즈 · 클래스 통일).
+
+폴더 규약:
+- 원천은 datasets/raw/<이름>/ (kimm = 앱 REC 카메라 원본, rf_* = download.py 공개셋).
+- 산출물은 소스별로 out/<이름>/images|labels/{train,val} 에 씁니다.
+- out/data.yaml 하나가 디스크에 있는 소스 산출물 전체를 묶어 train.py 가 읽습니다
+  (Ultralytics 는 train/val 에 폴더 목록을 지원).
 
 설계 원칙:
 - 로컬(인도메인)은 소스 내부에서 먼저 train/val 분할 → 검증(val)은 로컬에서만 나옴.
@@ -11,7 +17,8 @@
   그 이미지는 데이터셋에서 제외됩니다(기존 동작과 동일: 대상 없는 이미지는 안 넣음).
 - 크롭 인자는 소스마다 독립입니다(공유 기본값 없음). 창을 %로 고정하거나
   (width/height/center_x/center_y), auto_crop 으로 이미지마다 라벨에서 직접 잡습니다.
-- targets 에 이름을 적으면 그 소스만 처리합니다 (비우면 전체).
+- targets 에 이름을 적으면 그 소스만 다시 굽습니다 (비우면 전체). 산출물이 소스별
+  폴더라서 나머지 소스의 기존 산출물은 유지되고, data.yaml 만 매번 다시 묶입니다.
 
 증강은 여기서 하지 않습니다. Ultralytics 가 학습 중에 온라인 증강을 하므로
 train_config.yaml 의 증강 하이퍼파라미터로 조절하고, 결과 확인은
@@ -20,7 +27,7 @@ train_config.yaml 의 증강 하이퍼파라미터로 조절하고, 결과 확�
 
 각 소스 폴더엔 data.yaml (names + train/val 경로) 이 있어야 함.
   · Roboflow export 는 기본 포함.
-  · 로컬은 최소 형식으로 하나 작성:  names: {0: wire}\n train: images/train
+  · 로컬(kimm)은 최소 형식으로 하나 작성:  names: {0: wire}\n train: images
 
 사용법:
     python preprocess.py
@@ -190,7 +197,7 @@ def transform_label(line: str, src_w: int, src_h: int,
 # ── 전처리 단계 ─────────────────────────────────────────────────────────────
 
 class Preprocessor(Stage):
-    """소스들을 하나의 학습용 YOLO seg 데이터셋으로 만드는 단계."""
+    """소스들을 소스별 산출물 + 통합 data.yaml 의 학습용 데이터셋으로 만드는 단계."""
 
     config_name = "preprocess_config.yaml"
     label = "preprocess"
@@ -299,9 +306,9 @@ class Preprocessor(Stage):
             raise FileNotFoundError(
                 f"{src['name']}: data.yaml 이 없습니다 → {dy_path}\n"
                 f"공개셋이면 python download.py 를 먼저 돌리세요.\n"
-                f"내 카메라 원본(raw)이면 두 줄짜리로 만들어 두면 됩니다:\n"
+                f"내 카메라 원본(kimm)이면 두 줄짜리로 만들어 두면 됩니다:\n"
                 f"    names: {{0: wire}}\n"
-                f"    train: images/train"
+                f"    train: images"
             )
         with dy_path.open("r", encoding="utf-8") as f:
             dy = yaml.safe_load(f) or {}
@@ -430,7 +437,10 @@ class Preprocessor(Stage):
 
         written = 0
         for split in ("train", "val"):
-            images = sorted((self.out / f"images/{split}").glob("*"))
+            images = []
+            for sub in sorted(d for d in self.out.iterdir()
+                              if d.is_dir() and d.name != "_preview"):
+                images += sorted((sub / f"images/{split}").glob("*"))
             images = [p for p in images if p.suffix.lower() in IMG_EXTS]
             if not images:
                 continue
@@ -438,7 +448,7 @@ class Preprocessor(Stage):
             step = len(images) / take
             for i in range(take):
                 path = images[int(i * step)]
-                lbl = self.out / f"labels/{split}" / (path.stem + ".txt")
+                lbl = self.labels_dir_for(path.parent) / (path.stem + ".txt")
                 with Image.open(path) as im:
                     canvas = im.convert("RGB")
                     draw = ImageDraw.Draw(canvas)
@@ -456,22 +466,52 @@ class Preprocessor(Stage):
 
     # -- 실행 ------------------------------------------------------------
 
+    def write_data_yaml(self) -> tuple[list, list]:
+        """디스크에 있는 소스 산출물 전체를 묶는 out/data.yaml 을 다시 쓴다."""
+        def has_images(d: Path) -> bool:
+            return d.is_dir() and any(p.suffix.lower() in IMG_EXTS for p in d.iterdir())
+
+        self.out.mkdir(parents=True, exist_ok=True)
+        all_names = [s["name"] for s in (self.cfg.get("sources") or [])]
+        train = [f"{n}/images/train" for n in all_names
+                 if has_images(self.out / n / "images/train")]
+        val = [f"{n}/images/val" for n in all_names
+               if has_images(self.out / n / "images/val")]
+
+        stale = sorted(d.name for d in self.out.iterdir()
+                       if d.is_dir() and d.name != "_preview" and d.name not in all_names)
+        if stale:
+            self.log(f"경고: sources 에 없는 산출물 폴더는 data.yaml 에서 제외했습니다: "
+                     f"{', '.join(stale)} (안 쓰면 지우세요)")
+
+        data_yaml = {
+            "path": str(self.out.resolve()),
+            "train": train,
+            "val": val,
+            "names": self.final_names,
+        }
+        with (self.out / "data.yaml").open("w", encoding="utf-8") as f:
+            yaml.safe_dump(data_yaml, f, allow_unicode=True, sort_keys=False)
+        return train, val
+
     def run(self) -> None:
         rng = random.Random(self.cfg.get("seed", 0))
-
-        dirs = {sp: self.out / f"images/{sp}" for sp in ("train", "val")}
-        lbls = {sp: self.out / f"labels/{sp}" for sp in ("train", "val")}
-        for d in (*dirs.values(), *lbls.values()):
-            self.clear_dir(d)  # 재실행 시 깨끗하게
 
         sources = self.selected_sources()
         all_names = [s["name"] for s in (self.cfg.get("sources") or [])]
         if len(sources) != len(all_names):
             self.log(f"대상(targets): {', '.join(s['name'] for s in sources)} "
-                     f"— 전체 {len(all_names)}개 중. 산출물엔 이 소스만 남습니다.")
+                     f"— 전체 {len(all_names)}개 중. 이 소스만 다시 굽고, "
+                     f"다른 소스의 기존 산출물은 유지됩니다.")
 
         n_train = n_val = 0
         for src in sources:
+            out_dir = self.out / src["name"]
+            dirs = {sp: out_dir / f"images/{sp}" for sp in ("train", "val")}
+            lbls = {sp: out_dir / f"labels/{sp}" for sp in ("train", "val")}
+            for d in (*dirs.values(), *lbls.values()):
+                self.clear_dir(d)  # 이 소스의 산출물만 비움 (재실행 시 깨끗하게)
+
             items = self.collect_source(src)
             if not items:
                 self.log(f"{src['name']}: 대상 이미지 0장 (경로/class_map/크롭 확인)")
@@ -500,14 +540,7 @@ class Preprocessor(Stage):
             self.log(f"{src['name']}: train +{src_train} (oversample x{oversample}), "
                      f"val +{n_val_src}  [{how}]")
 
-        data_yaml = {
-            "path": str(self.out.resolve()),
-            "train": "images/train",
-            "val": "images/val",
-            "names": self.final_names,
-        }
-        with (self.out / "data.yaml").open("w", encoding="utf-8") as f:
-            yaml.safe_dump(data_yaml, f, allow_unicode=True, sort_keys=False)
+        train_dirs, val_dirs = self.write_data_yaml()
 
         if self._dropped_instances or self._dropped_empty:
             self.log(f"크롭으로 폐기된 인스턴스 {self._dropped_instances}개 "
@@ -524,7 +557,10 @@ class Preprocessor(Stage):
             self.write_preview(int(preview.get("count", 12)))
 
         self.log(f"완료 → {self.out}")
-        self.log(f"합계: train {n_train}장, val {n_val}장 (val = 로컬 인도메인)")
+        self.log(f"이번 실행: train {n_train}장, val {n_val}장 (val = 로컬 인도메인)")
+        self.log(f"data.yaml 에 묶인 소스 폴더: train {len(train_dirs)}개, val {len(val_dirs)}개")
+        if not val_dirs:
+            self.log("주의: val 산출물이 없습니다 — 인도메인 소스(kimm)를 처리해야 검증이 됩니다.")
         self.log(f"data.yaml: {self.out / 'data.yaml'}")
         self.log("다음: python train.py")
 

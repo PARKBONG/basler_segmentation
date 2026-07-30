@@ -6,9 +6,9 @@
   2. 자동 크롭 (auto_crop_rect)     — 라벨 중심 정렬, margin, min_size 하한, 경계 밀어넣기
   3. 폴리곤 클리핑 (clip_polygon)   — 완전 포함 / 완전 배제 / 부분 걸침
   4. 라벨 변환 (transform_label)    — 재정규화 좌표, min_area 폐기, 비폴리곤 폐기
-  5. Preprocessor 전체              — 합성 데이터셋으로 병합·분할·oversample·크롭
-                                      + val 누수 없음 + class_map 필터 + data.yaml
-                                      + targets 필터 + auto_crop 산출물
+  5. Preprocessor 전체              — 합성 데이터셋으로 소스별 산출물·분할·oversample·크롭
+                                      + val 누수 없음 + class_map 필터 + 통합 data.yaml
+                                      + targets 필터 + 증분 재굽기 + auto_crop 산출물
   6. Trainer config 규약            — config 명시 강제(조용한 fallback 금지),
                                       stages/데이터/가중치 누락·오타 시 즉시 오류
 
@@ -184,18 +184,20 @@ def test_transform_label() -> None:
 # ── 5. Preprocessor 전체 ────────────────────────────────────────────────────
 
 def make_source(root: Path, name: str, count: int, size: int,
-                class_names: dict, lines_for) -> Path:
-    """합성 소스 하나 생성: images/train, labels/train, data.yaml."""
+                class_names: dict, lines_for, flat: bool = False) -> Path:
+    """합성 소스 하나 생성. flat=True 면 kimm 규약(images/, labels/, train: images)."""
     src = root / name
-    (src / "images/train").mkdir(parents=True, exist_ok=True)
-    (src / "labels/train").mkdir(parents=True, exist_ok=True)
+    img_rel = "images" if flat else "images/train"
+    lbl_rel = "labels" if flat else "labels/train"
+    (src / img_rel).mkdir(parents=True, exist_ok=True)
+    (src / lbl_rel).mkdir(parents=True, exist_ok=True)
     for i in range(count):
         Image.new("RGB", (size, size), (60 + i, 90, 120)).save(
-            src / f"images/train/img{i:03d}.png")
-        (src / f"labels/train/img{i:03d}.txt").write_text(
+            src / img_rel / f"img{i:03d}.png")
+        (src / lbl_rel / f"img{i:03d}.txt").write_text(
             "\n".join(lines_for(i)) + "\n", encoding="utf-8")
     with (src / "data.yaml").open("w", encoding="utf-8") as f:
-        yaml.safe_dump({"names": class_names, "train": "images/train"}, f)
+        yaml.safe_dump({"names": class_names, "train": img_rel}, f)
     return src
 
 
@@ -210,14 +212,15 @@ def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False,
         return ["0 0.40 0.40 0.60 0.40 0.60 0.60 0.40 0.60",
                 "1 0.02 0.02 0.06 0.02 0.06 0.06 0.02 0.06"]   # junk → class_map 에 없음
 
-    make_source(root, "raw", 10, 800, {0: "wire"}, local_lines)
+    # kimm 은 실제 규약처럼 flat 레이아웃(images/ + train: images)으로 만든다
+    make_source(root, "kimm", 10, 800, {0: "wire"}, local_lines, flat=True)
     make_source(root, "pub", 6, 800, {0: "cable", 1: "junk"}, public_lines)
 
     cfg = {
         "names": {0: "wire"},
         "targets": targets or [],
         "sources": [
-            {"name": "raw", "path": str(root / "raw"),
+            {"name": "kimm", "path": str(root / "kimm"),
              "class_map": {"wire": "wire"}, "val_ratio": 0.2, "oversample": 2,
              "crop": crop},
             {"name": "rf_a", "path": str(root / "pub"),
@@ -241,38 +244,42 @@ def test_pipeline_no_crop(root: Path) -> None:
     out = root / "out_nocrop"
     run_preprocess(root / "srcA", out, {"enabled": False})
 
-    train_imgs = sorted((out / "images/train").glob("*.png"))
-    val_imgs = sorted((out / "images/val").glob("*.png"))
+    kimm_train = sorted((out / "kimm/images/train").glob("*.png"))
+    kimm_val = sorted((out / "kimm/images/val").glob("*.png"))
+    rf_train = sorted((out / "rf_a/images/train").glob("*.png"))
+    rf_val = sorted((out / "rf_a/images/val").glob("*.png"))
 
-    # raw 10장 중 val 2장 → train 8장 × oversample 2 = 16, pub 6장 = 6 → 합 22
-    check("pipeline: train 장수", len(train_imgs) == 22, f"{len(train_imgs)}")
-    check("pipeline: val 장수", len(val_imgs) == 2, f"{len(val_imgs)}")
+    # kimm 10장 중 val 2장 → train 8장 × oversample 2 = 16, rf_a 6장 = 6
+    check("pipeline: 소스별 train 장수",
+          len(kimm_train) == 16 and len(rf_train) == 6,
+          f"kimm={len(kimm_train)} rf_a={len(rf_train)}")
+    check("pipeline: val 장수", len(kimm_val) == 2, f"{len(kimm_val)}")
 
-    check("pipeline: val 은 로컬에서만",
-          all(p.name.startswith("raw__") for p in val_imgs),
-          ", ".join(p.name for p in val_imgs))
+    check("pipeline: val 은 로컬(kimm)에서만", not rf_val,
+          ", ".join(p.name for p in rf_val))
     check("pipeline: oversample 사본은 val 에 없음",
-          not any("_os" in p.name for p in val_imgs))
+          not any("_os" in p.name for p in kimm_val))
 
     # 같은 원본이 train 과 val 양쪽에 있으면 누수
     def origin(p): return p.name.split("_os")[0]
     check("pipeline: train/val 원본 겹침 없음",
-          not ({origin(p) for p in train_imgs} & {origin(p) for p in val_imgs}))
+          not ({origin(p) for p in kimm_train} & {origin(p) for p in kimm_val}))
 
     # class_map 에 없는 junk(class 1) 는 제거되어야 함
-    pub_lbl = sorted((out / "labels/train").glob("rf_a__*.txt"))
+    pub_lbl = sorted((out / "rf_a/labels/train").glob("*.txt"))
     bad = [p.name for p in pub_lbl
            if any(l.split()[0] != "0" for l in p.read_text(encoding="utf-8").splitlines() if l.strip())]
     check("pipeline: class_map 밖 클래스 제거", not bad, str(bad[:3]))
 
-    # 크롭이 없으면 원본 그대로 (재인코딩 없음)
-    src_bytes = (root / "srcA/raw/images/train/img000.png").read_bytes()
-    same = [p for p in train_imgs if p.read_bytes() == src_bytes]
+    # 크롭이 없으면 원본 그대로 (재인코딩 없음) — kimm 은 flat 레이아웃(images/)
+    src_bytes = (root / "srcA/kimm/images/img000.png").read_bytes()
+    same = [p for p in kimm_train + kimm_val if p.read_bytes() == src_bytes]
     check("pipeline: 크롭 off 는 원본 바이트 그대로", len(same) >= 1, f"{len(same)}개 일치")
 
     data = yaml.safe_load((out / "data.yaml").read_text(encoding="utf-8"))
-    check("pipeline: data.yaml 내용",
-          data["train"] == "images/train" and data["val"] == "images/val"
+    check("pipeline: data.yaml 은 소스 폴더 목록",
+          data["train"] == ["kimm/images/train", "rf_a/images/train"]
+          and data["val"] == ["kimm/images/val"]
           and data["names"] == {0: "wire"}, str(data))
 
 
@@ -282,15 +289,18 @@ def test_pipeline_crop(root: Path) -> None:
             "center_x": 50, "center_y": 50, "min_area": 0.10}
     run_preprocess(root / "srcB", out, crop, preview=True)
 
-    train_imgs = sorted((out / "images/train").glob("*.png"))
-    check("crop: 장수 유지(중앙 대상은 살아남음)", len(train_imgs) == 22, f"{len(train_imgs)}")
+    train_imgs = sorted((out / "kimm/images/train").glob("*.png"))
+    rf_imgs = sorted((out / "rf_a/images/train").glob("*.png"))
+    check("crop: 장수 유지(중앙 대상은 살아남음)",
+          len(train_imgs) == 16 and len(rf_imgs) == 6,
+          f"kimm={len(train_imgs)} rf_a={len(rf_imgs)}")
 
     with Image.open(train_imgs[0]) as im:
         check("crop: 출력 이미지 크기", (im.width, im.height) == (640, 640), f"{im.size}")
 
     # 800px 원본의 (0.4~0.6) 사각형 = (320,320)-(480,480). 중앙 640 크롭의 원점은 (80,80)
     # → (240,240)-(400,400) → /640 = 0.375 ~ 0.625
-    line = (out / "labels/train" / (train_imgs[0].stem + ".txt")
+    line = (out / "kimm/labels/train" / (train_imgs[0].stem + ".txt")
             ).read_text(encoding="utf-8").splitlines()[0]
     v = [float(x) for x in line.split()[1:]]
     check("crop: 라벨이 크롭 좌표로 재정규화",
@@ -300,7 +310,7 @@ def test_pipeline_crop(root: Path) -> None:
 
     # 구석의 junk 는 class_map 에서 이미 빠지므로, 남은 건 wire 뿐
     check("crop: 클래스는 wire 뿐", all(l.split()[0] == "0" for l in
-          (out / "labels/train" / (train_imgs[0].stem + ".txt")
+          (out / "kimm/labels/train" / (train_imgs[0].stem + ".txt")
            ).read_text(encoding="utf-8").splitlines() if l.strip()))
 
     previews = list((out / "_preview").glob("*.png"))
@@ -313,14 +323,16 @@ def test_pipeline_auto_crop(root: Path) -> None:
             "auto_crop": {"enabled": True, "margin": 0.25, "min_size": 640}}
     stage = run_preprocess(root / "srcC", out, crop)
 
-    train_imgs = sorted((out / "images/train").glob("*.png"))
-    check("auto: 장수 유지", len(train_imgs) == 22, f"{len(train_imgs)}")
+    train_imgs = sorted((out / "kimm/images/train").glob("*.png"))
+    rf_imgs = sorted((out / "rf_a/images/train").glob("*.png"))
+    check("auto: 장수 유지", len(train_imgs) == 16 and len(rf_imgs) == 6,
+          f"kimm={len(train_imgs)} rf_a={len(rf_imgs)}")
 
     # 800px 원본의 (320,320)-(480,480) 라벨 → 160*1.5=240 이지만 min_size 640 으로 확대,
     # 중심 400 → 창 (80,80,640,640). 라벨은 (240,240)-(400,400) → /640 = 0.375~0.625
     with Image.open(train_imgs[0]) as im:
         check("auto: 출력 이미지 크기 = min_size", (im.width, im.height) == (640, 640), f"{im.size}")
-    v = [float(x) for x in (out / "labels/train" / (train_imgs[0].stem + ".txt")
+    v = [float(x) for x in (out / "kimm/labels/train" / (train_imgs[0].stem + ".txt")
                             ).read_text(encoding="utf-8").splitlines()[0].split()[1:]]
     check("auto: 라벨이 창 좌표로 재정규화",
           approx(min(v), 0.375, 1e-3) and approx(max(v), 0.625, 1e-3),
@@ -333,7 +345,7 @@ def test_pipeline_auto_crop(root: Path) -> None:
              "auto_crop": {"enabled": True, "margin": 0.25, "min_size": 1024}}
     stage2 = run_preprocess(root / "srcD", out2, crop2)
     check("auto: min_size > 원본이면 경고 집계", stage2._undersized > 0, f"{stage2._undersized}")
-    with Image.open(sorted((out2 / "images/train").glob("*.png"))[0]) as im:
+    with Image.open(sorted((out2 / "kimm/images/train").glob("*.png"))[0]) as im:
         check("auto: 원본 크기로 클램프", (im.width, im.height) == (800, 800), f"{im.size}")
 
 
@@ -341,13 +353,14 @@ def test_pipeline_targets(root: Path) -> None:
     out = root / "out_targets"
     run_preprocess(root / "srcE", out, {"enabled": False}, targets=["rf_a"])
 
-    train_imgs = sorted((out / "images/train").glob("*.png"))
+    train_imgs = sorted((out / "rf_a/images/train").glob("*.png"))
     check("targets: 지정한 소스만 처리", len(train_imgs) == 6, f"{len(train_imgs)}")
-    check("targets: 빠진 소스는 산출물에 없음",
-          all(p.name.startswith("rf_a__") for p in train_imgs),
-          ", ".join(p.name for p in train_imgs[:3]))
-    check("targets: val_ratio 0 소스만이면 val 은 빔",
-          not list((out / "images/val").glob("*.png")))
+    check("targets: 빠진 소스는 산출물에 없음", not (out / "kimm").exists())
+
+    data = yaml.safe_load((out / "data.yaml").read_text(encoding="utf-8"))
+    check("targets: data.yaml 은 있는 산출물만",
+          data["train"] == ["rf_a/images/train"], str(data["train"]))
+    check("targets: val_ratio 0 소스만이면 val 은 빔", data["val"] == [], str(data["val"]))
 
     # 없는 이름은 조용히 넘어가지 않고 바로 알려줘야 함
     try:
@@ -355,6 +368,23 @@ def test_pipeline_targets(root: Path) -> None:
         check("targets: 오타는 SystemExit", False, "예외가 안 났음")
     except SystemExit as e:
         check("targets: 오타는 SystemExit", "nope" in str(e), str(e).splitlines()[0])
+
+
+def test_pipeline_incremental(root: Path) -> None:
+    """targets 재실행이 다른 소스의 산출물을 보존하고 data.yaml 을 다시 묶는지."""
+    out = root / "out_incr"
+    run_preprocess(root / "srcG", out, {"enabled": False})                    # 전체
+    before = [p.name for p in sorted((out / "kimm/images/train").glob("*.png"))]
+
+    run_preprocess(root / "srcG", out, {"enabled": False}, targets=["rf_a"])  # rf_a 만
+    after = [p.name for p in sorted((out / "kimm/images/train").glob("*.png"))]
+    check("incremental: 다른 소스 산출물 보존", before == after and bool(before),
+          f"before={len(before)} after={len(after)}")
+
+    data = yaml.safe_load((out / "data.yaml").read_text(encoding="utf-8"))
+    check("incremental: data.yaml 은 디스크 전체를 다시 묶음",
+          data["train"] == ["kimm/images/train", "rf_a/images/train"]
+          and data["val"] == ["kimm/images/val"], str(data))
 
 
 # ── 6. Trainer config 규약 ──────────────────────────────────────────────────
@@ -483,6 +513,7 @@ def main() -> int:
         test_pipeline_crop(root)
         test_pipeline_auto_crop(root)
         test_pipeline_targets(root)
+        test_pipeline_incremental(root)
         test_trainer_config_required(root)
         test_trainer_stages_guard(root)
         test_trainer_data_and_weights(root)

@@ -75,8 +75,8 @@ public sealed class FrameRecorder : IDisposable
     /// <summary>
     /// Resolve the configured destination. Absolute paths are used as-is; relative
     /// ones are anchored at the repo root — the nearest ancestor of the exe holding
-    /// <c>.git</c> — so the default <c>datasets/raw/images/train</c> lands exactly
-    /// where finetuner/preprocess.py reads the <c>raw</c> source from.
+    /// <c>.git</c> — so the default <c>datasets/raw/kimm/images</c> lands exactly
+    /// where finetuner/preprocess.py reads the <c>kimm</c> raw source from.
     ///
     /// The marker is <c>.git</c> rather than any pipeline file on purpose: renaming
     /// or reorganising the finetuner scripts must not silently redirect recordings.
@@ -84,7 +84,7 @@ public sealed class FrameRecorder : IDisposable
     public static string ResolveDirectory(string configured)
     {
         if (string.IsNullOrWhiteSpace(configured))
-            configured = "datasets/raw/images/train";
+            configured = "datasets/raw/kimm/images";
 
         if (Path.IsPathRooted(configured))
             return Path.GetFullPath(configured);

@@ -13,7 +13,8 @@ sources:
   # workspace/project 는 Universe URL 의 두 조각 그대로:
   #   universe.roboflow.com/<workspace>/<project>
   - name: rf_a
-    path: ../datasets/rf_a       # 받은 파일이 풀릴 위치 (preprocess 가 이 경로를 참조)
+    path: ../datasets/raw/rf_a   # 받은 파일이 풀릴 위치 (preprocess 가 이 경로를 참조)
+                                 # 규약: 모든 원천 데이터는 datasets/raw/<이름>/ 아래에 둡니다.
     roboflow:
       # https://app.roboflow.com/waam-syqaj/weld-distance-8tgl8
       # (dominik-brnjak-gcdtj/weld-distance 를 내 워크스페이스로 fork 한 것)

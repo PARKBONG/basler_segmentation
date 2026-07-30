@@ -39,13 +39,14 @@
     <!-- Record 버튼이 PNG를 저장할 폴더. 저장되는 건 크롭 전 '풀사이즈 원본'입니다
          (크롭은 라벨까지 같이 잘라야 하므로 finetuner/preprocess.py 가 담당).
          상대경로는 저장소 루트(= .git 이 있는 폴더) 기준으로 풀립니다.
-             datasets/raw/images/train
-         라벨은 datasets/raw/labels/train 에 넣고, datasets/raw/data.yaml 을 한 줄짜리로
-         만들어 두면 preprocess.py 의 raw 소스로 그대로 읽힙니다:
+         규약: 모든 원천 데이터는 datasets/raw/<소스이름>/ 아래 — 카메라 원본은 kimm.
+             datasets/raw/kimm/images
+         라벨은 datasets/raw/kimm/labels 에 넣고, datasets/raw/kimm/data.yaml 을
+         두 줄짜리로 만들어 두면 preprocess.py 의 kimm 소스로 그대로 읽힙니다:
              names: {0: wire}
-             train: images/train
+             train: images
          절대경로를 적으면 그 경로를 그대로 사용합니다. -->
-    <Directory>datasets/raw/images/train</Directory>
+    <Directory>datasets/raw/kimm/images</Directory>
     <!-- 초당 저장 장수. 연속된 프레임은 거의 똑같아서 전부 저장해봐야 디스크와 라벨링
          시간만 먹습니다. 그랩은 <FrameRate> 그대로 돌고, 저장만 이 주기로 샘플링합니다.
          2 = 0.5초에 1장. 0 으로 두면 그랩되는 모든 프레임을 저장합니다. -->
