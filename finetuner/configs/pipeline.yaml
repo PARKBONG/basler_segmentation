@@ -1,11 +1,11 @@
-# 데이터 파이프라인 통합 설정 — download.py 와 preprocess.py 가 함께 읽습니다.
+# 데이터 파이프라인 통합 설정(configs/pipeline.yaml) — download.py 와 preprocess.py 가 함께 읽습니다.
 #   python download.py                    # roboflow: 블록이 있는 소스만 내려받음
 #   python preprocess.py --stage <이름>   # stages: 의 한 스테이지를 굽기 (--stage 필수)
 # 경로는 이 yaml(=finetuner/ 폴더) 기준 상대경로 또는 절대경로.
 #
 # 구조 — "소스가 무엇인지"와 "스테이지가 무엇을 굽는지"를 분리합니다:
 #   sources:  소스의 정의 — 어디 있고(path/roboflow) 어떻게 처리하는지(class_map·크롭…).
-#             예전 preprocess_config*.yaml 3벌에 중복돼 있던 블록을 여기 한 번만 적습니다.
+#             (스테이지별로 나뉘어 있던 예전 설정을 여기 한 번만 적습니다.)
 #   stages:   스테이지별 구성 — 어떤 소스를(use) 어떤 비율로(val_ratio…) 어디에(out) 굽는지.
 #             use 의 값은 위 sources 정의를 필드 단위로 덮어씁니다.
 #

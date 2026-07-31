@@ -29,7 +29,7 @@ from pathlib import Path
 import yaml
 from PIL import Image
 
-from common import HERE
+from common import CONFIG_DIR, HERE
 from preprocess import (Preprocessor, auto_crop_rect, clip_polygon, crop_rect, label_bbox,
                         polygon_area, transform_label)
 from train import Trainer   # ultralytics 는 메서드 안에서 import 하므로 여기선 불필요
@@ -467,7 +467,7 @@ def test_trainer_config_required(root: Path) -> None:
     # 상대경로는 finetuner/ 기준으로 해석되고, 넘긴 파일이 그대로 쓰여야 함
     t = Trainer("train_config.stage1.yaml")
     check("trainer: 넘긴 config 를 그대로 읽음",
-          t.config_path == HERE / "train_config.stage1.yaml", str(t.config_path))
+          t.config_path == CONFIG_DIR / "train_config.stage1.yaml", str(t.config_path))
     check("trainer: stage1 config 내용 확인",
           t.cfg["train"]["name"] == "stage1", str(t.cfg["train"].get("name")))
 
@@ -547,13 +547,13 @@ def test_preprocess_stage_required() -> None:
           "stage1" in Preprocessor.stage_candidates(), Preprocessor.stage_candidates())
 
 
-def test_real_download_config() -> None:
-    """저장소의 download_config.yaml 이 규약을 지키는지 (통합 config 린트)."""
+def test_real_pipeline_config() -> None:
+    """저장소의 configs/pipeline.yaml 이 규약을 지키는지 (통합 config 린트)."""
     stage_names = list((yaml.safe_load(
-        (HERE / Preprocessor.config_name).read_text(encoding="utf-8")) or {}
+        Preprocessor.default_config_path().read_text(encoding="utf-8")) or {}
     ).get("stages") or {})
     required = {"single", "stage1", "stage2"}
-    check("download_config: 단일/stage1/stage2 존재", required <= set(stage_names),
+    check("pipeline.yaml: 단일/stage1/stage2 존재", required <= set(stage_names),
           ", ".join(stage_names))
 
     outs = {}
@@ -566,15 +566,15 @@ def test_real_download_config() -> None:
         check(f"stage {name}: val_ratio > 0 소스 존재",
               any(float(s.get("val_ratio", 0)) > 0 for s in srcs))
         outs[name] = str(st.stage_cfg.get("out"))
-    check("download_config: 단일/stage1/stage2 out 이 전부 다름",
+    check("pipeline.yaml: 단일/stage1/stage2 out 이 전부 다름",
           len({outs[n] for n in required if n in outs}) == len(required & set(stage_names)),
           str(outs))
 
     # download.py 쪽 규약 — 내려받을 소스는 workspace/project 가 있어야 함
     all_sources = yaml.safe_load(
-        (HERE / Preprocessor.config_name).read_text(encoding="utf-8")).get("sources") or []
+        Preprocessor.default_config_path().read_text(encoding="utf-8")).get("sources") or []
     rf = [s for s in all_sources if s.get("roboflow")]
-    check("download_config: roboflow 소스 존재 + workspace/project",
+    check("pipeline.yaml: roboflow 소스 존재 + workspace/project",
           bool(rf) and all(s["roboflow"].get("workspace") and s["roboflow"].get("project")
                            for s in rf),
           ", ".join(s["name"] for s in rf) or "(없음)")
@@ -582,7 +582,7 @@ def test_real_download_config() -> None:
 
 def test_real_train_configs() -> None:
     """저장소에 있는 train_config*.yaml 이 모두 규약을 지키는지 (config 린트)."""
-    names = sorted(p.name for p in HERE.glob(Trainer.config_glob))
+    names = sorted(p.name for p in CONFIG_DIR.glob(Trainer.config_glob))
     check("configs: train_config*.yaml 이 존재", bool(names), ", ".join(names))
 
     for name in names:
@@ -617,7 +617,7 @@ def main() -> int:
         test_pipeline_incremental(root)
         test_pipeline_three_way(root)
         test_preprocess_stage_required()
-        test_real_download_config()
+        test_real_pipeline_config()
         test_trainer_config_required(root)
         test_trainer_stages_guard(root)
         test_trainer_data_and_weights(root)

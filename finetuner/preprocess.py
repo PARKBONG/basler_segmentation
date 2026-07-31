@@ -8,7 +8,7 @@
   (Ultralytics 는 각 split 에 폴더 목록을 지원). test 는 있을 때만 키를 넣습니다.
 
 설계 원칙:
-- 어떤 데이터셋을 굽는지는 download_config.yaml 의 stages 가 정합니다 — 소스 정의는
+- 어떤 데이터셋을 굽는지는 configs/pipeline.yaml 의 stages 가 정합니다 — 소스 정의는
   sources 에 한 번만 적고, 스테이지별 use 가 포함 소스와 val/test 비율을 정합니다.
   후보(단일/stage1/stage2)가 여럿이라 --stage 로 반드시 명시합니다.
 - 분할(train/val/test)은 소스 내부에서, oversample 전에 그룹(원본) 단위로 나눕니다.
@@ -208,7 +208,7 @@ def transform_label(line: str, src_w: int, src_h: int,
 class Preprocessor(Stage):
     """소스들을 소스별 산출물 + 통합 data.yaml 의 학습용 데이터셋으로 만드는 단계."""
 
-    config_name = "download_config.yaml"   # download.py 와 같은 파일을 읽습니다
+    config_name = "pipeline.yaml"   # configs/pipeline.yaml — download.py 와 같은 파일
     label = "preprocess"
 
     def __init__(self, stage=None, config_path=None, only=None) -> None:
@@ -241,9 +241,9 @@ class Preprocessor(Stage):
 
     @classmethod
     def stage_candidates(cls) -> str:
-        """download_config.yaml 의 stages 키들 — 오류 메시지/CLI 도움말용."""
+        """configs/pipeline.yaml 의 stages 키들 — 오류 메시지/CLI 도움말용."""
         try:
-            stages = load_yaml(resolve(cls.config_name)).get("stages") or {}
+            stages = load_yaml(cls.default_config_path()).get("stages") or {}
         except FileNotFoundError:
             return "(없음)"
         return ", ".join(stages) or "(없음)"
@@ -660,13 +660,13 @@ class Preprocessor(Stage):
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="공개 + 로컬 데이터를 학습용 YOLO seg 데이터셋으로 전처리",
-        epilog="download_config.yaml 의 스테이지 후보: " + Preprocessor.stage_candidates(),
+        epilog="configs/pipeline.yaml 의 스테이지 후보: " + Preprocessor.stage_candidates(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     # required=True 대신 생성자가 실제 config 의 stages 를 읽어 후보와 함께 거절합니다.
     ap.add_argument(
         "--stage", metavar="NAME",
-        help="구울 스테이지 (필수 — 기본값 없음). download_config.yaml 의 stages 키",
+        help="구울 스테이지 (필수 — 기본값 없음). configs/pipeline.yaml 의 stages 키",
     )
     ap.add_argument(
         "--only", nargs="+", metavar="SOURCE",

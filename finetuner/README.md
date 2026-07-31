@@ -6,8 +6,8 @@ yolo26s-seg 파인튜닝 파이프라인. 코드/설정만 여기 두고, 실제
 
 | 파일 | 클래스 | config | 역할 |
 |------|--------|--------|------|
-| `download.py` | `Downloader` | `download_config.yaml` (자동) | 공개(Roboflow) 데이터셋 획득 — `roboflow:` 블록이 있는 소스만 |
-| `preprocess.py` | `Preprocessor` | `download_config.yaml` (자동) + **`--stage` 필수** | 소스별 개별 처리(크롭·리사이즈·클래스 통일·train/val/test 분할·oversample) 후 하나로 병합 |
+| `download.py` | `Downloader` | `configs/pipeline.yaml` (자동) | 공개(Roboflow) 데이터셋 획득 — `roboflow:` 블록이 있는 소스만 |
+| `preprocess.py` | `Preprocessor` | `configs/pipeline.yaml` (자동) + **`--stage` 필수** | 소스별 개별 처리(크롭·리사이즈·클래스 통일·train/val/test 분할·oversample) 후 하나로 병합 |
 | `train.py` | `Trainer` | **`--config` 필수** | 파인튜닝 · 증강 미리보기 · ONNX export |
 | `eval.py` | — | 명령행 인자 | 학습된 checkpoint 를 지정 split 에서 평가 |
 | `common.py` | `Stage` | — | config 로드 · 경로 해석 · 로그 |
@@ -18,7 +18,7 @@ python download.py    →  python preprocess.py --stage <이름>   →  python t
    datasets/raw/rf_*/     datasets/{processed,stage1,stage2}/      runs/segment/ + 앱 Models/
 ```
 
-데이터 쪽 설정은 `download_config.yaml` **하나**입니다 — 소스 정의(`sources:` — 어디 있고
+데이터 쪽 설정은 `configs/pipeline.yaml` **하나**입니다 — 소스 정의(`sources:` — 어디 있고
 어떻게 처리하는지)와 스테이지 구성(`stages:` — 어떤 소스를 어떤 비율로 어디에 굽는지)을
 같은 파일이 소유하므로, 다운로드와 전처리가 경로를 서로 맞출 필요가 없습니다.
 
@@ -31,7 +31,7 @@ Downloader().run(); Preprocessor("single").run(); Trainer("train_config.yaml").r
 
 ### 스테이지·config 는 명시해야 합니다 (preprocess · train)
 
-`download` 와 `preprocess` 는 `download_config.yaml` 을 자동으로 읽습니다. 다만
+`download` 와 `preprocess` 는 `configs/pipeline.yaml` 을 자동으로 읽습니다. 다만
 **`preprocess.py` 는 스테이지 후보가 여럿(단일/stage1/stage2)이라 `--stage` 없이는
 실행되지 않고, `train.py` 는 같은 이유로 `--config` 없이는 실행되지 않습니다.**
 스테이지와 train yaml 은 1:1 로 짝을 이룹니다:
@@ -104,12 +104,12 @@ train: images
 
 앱은 **크롭하지 않은 원본**을 저장합니다. 크롭은 폴리곤 라벨까지 함께 잘라야 하므로
 `preprocess.py` 가 담당하고, 앱에서 버린 픽셀은 되돌릴 수 없기 때문입니다. 앱 툴바
-슬라이더로 눈으로 찾은 위치(%)를 `download_config.yaml` 의 `crop.center_x/center_y` 에
+슬라이더로 눈으로 찾은 위치(%)를 `configs/pipeline.yaml` 의 `crop.center_x/center_y` 에
 그대로 옮겨 적으면 됩니다 — 두 곳이 같은 0~100% 규약을 씁니다.
 
 ## 소스별 개별 처리
 
-`download_config.yaml` 의 `sources:` 항목 하나가 곧 데이터셋 하나이고, 인자를 각자 가집니다.
+`configs/pipeline.yaml` 의 `sources:` 항목 하나가 곧 데이터셋 하나이고, 인자를 각자 가집니다.
 소스가 **무엇인지**(위치·처리 인자)는 `sources:` 에 한 번만 적고, 스테이지가 **무엇을
 굽는지**(포함 소스·비율·산출 위치)는 `stages:` 가 정합니다:
 
@@ -238,5 +238,5 @@ python -c "import torch; print(torch.__version__, torch.cuda.get_device_name(0))
 ```
 
 ## roboflow
-$ setx ROBOFLOW_API_KEY "mzbA71wxvqdAFlyB6nPN" ## dummy fake key
+$ setx ROBOFLOW_API_KEY "xxxxxxxxxxxxxxxxxxxx" ## 본인 키로 교체
 

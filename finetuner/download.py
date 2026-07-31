@@ -1,7 +1,7 @@
 """
 공개(Roboflow Universe) 데이터셋을 SDK로 다운로드.
 
-download_config.yaml 의 sources 중 roboflow: 블록이 있는 소스를 해당 path 폴더에
+configs/pipeline.yaml 의 sources 중 roboflow: 블록이 있는 소스를 해당 path 폴더에
 받아옵니다. preprocess.py 도 같은 파일의 같은 path 를 읽으므로 따로 맞출 게 없습니다
 (preprocess 는 폴더가 없으면 "download 를 먼저 돌리라"고 알려줍니다).
 
@@ -20,6 +20,7 @@ val_ratio/test_ratio 로 다시 하므로 원천(raw)에는 분할을 두지 않
 """
 from __future__ import annotations
 
+import argparse
 import re
 import shutil
 from pathlib import Path
@@ -30,9 +31,9 @@ from common import Stage, load_yaml, normalize_names, roboflow_api_key
 
 
 class Downloader(Stage):
-    """download_config.yaml 의 공개 데이터셋을 내려받는 단계."""
+    """configs/pipeline.yaml 의 공개 데이터셋을 내려받는 단계."""
 
-    config_name = "download_config.yaml"
+    config_name = "pipeline.yaml"   # configs/pipeline.yaml — preprocess.py 와 공유
     label = "download"
 
     @staticmethod
@@ -166,5 +167,14 @@ class Downloader(Stage):
         self.log(f"완료: {done}/{len(sources)} 소스. 다음: python preprocess.py --stage <이름>")
 
 
-if __name__ == "__main__":
+def main() -> None:
+    # 인자는 없지만 --help 와 오타 거절을 위해 형제 스크립트처럼 argparse 를 둔다.
+    argparse.ArgumentParser(
+        description="Roboflow 공개 데이터셋 다운로드 (configs/pipeline.yaml 자동, "
+                    "환경변수 ROBOFLOW_API_KEY 필요)",
+    ).parse_args()
     Downloader().run()
+
+
+if __name__ == "__main__":
+    main()

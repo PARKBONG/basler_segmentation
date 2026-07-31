@@ -42,6 +42,8 @@ include/pylon/Runtime/x64/DataProcessingPluginsB/
 /finetuner/runs/
 # 다운로드/학습 가중치(base·best·last)
 /finetuner/*.pt
+# 가상환경 (pip 이 만드는 .venv/.gitignore 에만 의존하지 않게 명시)
+/finetuner/.venv/
 # Python 바이트코드
 __pycache__/
 *.py[cod]

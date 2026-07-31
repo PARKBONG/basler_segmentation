@@ -29,7 +29,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from common import HERE, Stage
+from common import Stage
 
 
 class Trainer(Stage):
@@ -40,7 +40,7 @@ class Trainer(Stage):
     yaml 을 쓰므로 기본값을 두면 조용히 엉뚱한 설정으로 학습할 수 있습니다.
     """
 
-    config_name = "train_config.yaml"        # 오류 메시지의 예시일 뿐, 자동 선택 안 함
+    config_name = "train_config.yaml"        # 오류 메시지의 예시일 뿐, 자동 선택 안 함 (configs/)
     config_glob = "train_config*.yaml"
     explicit_config = True
     label = "train"
@@ -240,15 +240,14 @@ class Trainer(Stage):
 
 
 def main() -> None:
-    found = sorted(p.name for p in HERE.glob(Trainer.config_glob))
     ap = argparse.ArgumentParser(
         description="yolo26s-seg 파인튜닝 + ONNX export",
-        epilog="finetuner/ 의 config 후보: " + (", ".join(found) or "(없음)"),
+        epilog="configs/ 의 후보: " + Trainer.config_candidates(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument(
         "--config", required=True, metavar="YAML",
-        help="학습 설정 yaml (필수 — 기본값 없음). finetuner/ 기준 상대경로 또는 절대경로",
+        help="학습 설정 yaml (필수 — 기본값 없음). configs/ 안 파일명 또는 경로",
     )
     Trainer(ap.parse_args().config).run()
 

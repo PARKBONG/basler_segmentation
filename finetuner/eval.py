@@ -22,8 +22,6 @@ from __future__ import annotations
 
 import argparse
 
-from ultralytics import YOLO
-
 from common import resolve
 
 
@@ -55,6 +53,8 @@ def main() -> None:
     if args.split == "test":
         print("[eval][주의] test 는 최종 무편향 평가용입니다. 이 결과를 보고 "
               "하이퍼파라미터를 다시 조정하면 오염됩니다.")
+
+    from ultralytics import YOLO   # 무거운 import 는 인자/경로 검증 뒤로
 
     model = YOLO(str(weights))
     m = model.val(data=str(data), split=args.split, imgsz=args.imgsz, device=args.device)

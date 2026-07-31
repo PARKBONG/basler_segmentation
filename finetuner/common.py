@@ -1,18 +1,19 @@
 """
 파이프라인 공통 기반 — 각 단계가 공유하는 config 로드 · 경로 해석 · 로그.
 
-download 와 preprocess 는 통합 설정 download_config.yaml 을 자동으로 읽습니다
-(config 인자 없음). 다만 후보가 여럿인 선택은 **반드시 명시**해야 합니다 —
-기본값으로 조용히 넘어가면 의도한 것과 다른 데이터/설정으로 학습해도 알 수
-없기 때문입니다. preprocess 는 스테이지(단일/stage1/stage2)를, train 은 config
-파일을 명시합니다:
+설정 yaml 은 모두 configs/ 아래에 있습니다. download 와 preprocess 는 통합 설정
+configs/pipeline.yaml 을 자동으로 읽습니다 (config 인자 없음). 다만 후보가 여럿인
+선택은 **반드시 명시**해야 합니다 — 기본값으로 조용히 넘어가면 의도한 것과 다른
+데이터/설정으로 학습해도 알 수 없기 때문입니다. preprocess 는 스테이지
+(단일/stage1/stage2)를, train 은 config 파일을 명시합니다:
 
-    download.py                          공개셋 획득 (download_config.yaml 자동)
+    download.py                          공개셋 획득 (configs/pipeline.yaml 자동)
     preprocess.py --stage stage1         데이터셋 굽기 (같은 yaml 의 stages 중 하나)
     train.py --config train_config.stage1.yaml   학습 + ONNX export
 
 어느 쪽이든 읽은 config 경로는 항상 로그 첫 줄에 찍습니다.
-경로는 모두 이 폴더(finetuner/) 기준 상대경로이거나 절대경로입니다.
+--config 인자는 configs/ 안 파일명으로도, 경로 그대로(finetuner/ 기준)로도 됩니다.
+yaml **내용물**의 경로(../datasets/… 등)는 configs/ 가 아니라 finetuner/ 기준입니다.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ from pathlib import Path
 import yaml
 
 HERE = Path(__file__).resolve().parent
+CONFIG_DIR = HERE / "configs"
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
@@ -74,8 +76,8 @@ class Stage:
     (preprocess 는 config 가 하나가 됐지만 같은 이유로 스테이지를 생략할 수 없습니다.)
     """
 
-    config_name: str = ""      # 단일 config 단계의 기본 파일명 / 오류 메시지의 예시
-    config_glob: str = ""      # explicit_config 일 때 후보를 찾을 패턴
+    config_name: str = ""      # 단일 config 단계의 기본 파일명 (configs/ 안) / 오류 메시지의 예시
+    config_glob: str = ""      # explicit_config 일 때 configs/ 에서 후보를 찾을 패턴
     explicit_config: bool = False
     label: str = "stage"       # 로그 접두사 겸 스크립트 이름(<label>.py)
 
@@ -89,24 +91,35 @@ class Stage:
                     f"[{self.label}] 읽을 config 를 명시하세요 — 기본값으로 조용히 넘어가지 "
                     f"않습니다.\n"
                     f"  python {self.label}.py --config <yaml>\n"
-                    f"  finetuner/ 의 후보: {self.config_candidates()}"
+                    f"  configs/ 의 후보: {self.config_candidates()}"
                 )
-            config_path = self.config_name
+            config_path = self.default_config_path()
 
+        # 경로 그대로(finetuner/ 기준) 먼저, 없으면 configs/<이름> 으로도 찾는다 —
+        # `--config train_config.yaml` 처럼 파일명만 적는 기존 습관을 유지하기 위함.
         self.config_path = resolve(config_path)
+        if not self.config_path.exists():
+            alt = CONFIG_DIR / str(config_path)
+            if alt.exists():
+                self.config_path = alt
         if self.explicit_config and not self.config_path.exists():
             # 이름을 잘못 적었을 때 traceback 대신 후보를 보여준다
             raise SystemExit(
                 f"[{self.label}] config 파일이 없습니다: {self.config_path}\n"
-                f"  finetuner/ 의 후보: {self.config_candidates()}"
+                f"  configs/ 의 후보: {self.config_candidates()}"
             )
         self.cfg = load_yaml(self.config_path)
         self.log(f"config: {self.config_path}")   # 무엇을 읽었는지 항상 남긴다
 
     @classmethod
+    def default_config_path(cls) -> Path:
+        """이 단계의 기본 config 위치 (configs/<config_name>)."""
+        return CONFIG_DIR / cls.config_name
+
+    @classmethod
     def config_candidates(cls) -> str:
-        """finetuner/ 에서 이 단계가 쓸 수 있는 config 파일 이름들."""
-        found = sorted(p.name for p in HERE.glob(cls.config_glob or cls.config_name))
+        """configs/ 에서 이 단계가 쓸 수 있는 config 파일 이름들."""
+        found = sorted(p.name for p in CONFIG_DIR.glob(cls.config_glob or cls.config_name))
         return ", ".join(found) or "(없음)"
 
     @staticmethod
