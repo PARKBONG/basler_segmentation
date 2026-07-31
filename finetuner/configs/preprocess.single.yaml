@@ -30,7 +30,8 @@ preview:
 # (이 프로젝트는 OBB 로 진행). seg = 폴리곤 그대로.
 task: obb
 
-out: ../datasets/processed   # train.single.yaml 의 train.data 와 1:1 짝
+
+out: ../datasets/processed/single   # train.single.yaml 의 train.data 와 1:1 짝
 
 sources:
   # ── 내 카메라 원본 (비공개, 인도메인 = 귀중) ─────────────────────────

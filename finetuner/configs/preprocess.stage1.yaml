@@ -17,7 +17,8 @@ preview:
 # (이 프로젝트는 OBB 로 진행). seg = 폴리곤 그대로.
 task: obb
 
-out: ../datasets/stage1      # train.stage1.yaml 의 train.data 와 1:1 짝
+
+out: ../datasets/processed/stage1   # train.stage1.yaml 의 train.data 와 1:1 짝
 
 sources:
   - name: rf_a

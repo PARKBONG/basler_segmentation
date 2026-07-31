@@ -326,8 +326,10 @@ def test_pipeline_crop(root: Path) -> None:
           (out / "kimm/labels/train" / (train_imgs[0].stem + ".txt")
            ).read_text(encoding="utf-8").splitlines() if l.strip()))
 
-    previews = list((out / "_preview").glob("*.png"))
-    check("crop: 미리보기 생성", len(previews) > 0, f"{len(previews)}장")
+    previews = list((out / "kimm/preview").glob("*.png")) + \
+               list((out / "rf_a/preview").glob("*.png"))
+    check("crop: 소스별 preview/ 생성", len(previews) > 0, f"{len(previews)}장")
+    check("crop: out 루트에 _preview 없음", not (out / "_preview").exists())
 
 
 def test_pipeline_auto_crop(root: Path) -> None:

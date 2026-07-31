@@ -1,7 +1,7 @@
 # Stage 2 (in-domain 적응) 파인튜닝 설정.
 #   python train.py --config train_config.stage2.yaml
 # (--config 는 필수입니다. 생략하면 train.py 가 오류로 멈춥니다 — 조용한 기본값 없음)
-# 데이터: preprocess.py 산출물 datasets/stage2/data.yaml (train/val/test = in-domain)
+# 데이터: preprocess.py 산출물 datasets/processed/stage2/data.yaml (train/val/test = in-domain)
 # 목적: Stage1 warm-start 위에 실제 추론 도메인(아크 광/카메라)에 최종 적응.
 #
 # ★ model: 에 Stage1 결과 checkpoint 를 직접 지정하세요 (독립 실행 + 수동 체이닝).
@@ -18,7 +18,7 @@ stages:
 
 train:
   model: runs/segment/stage1/weights/best.pt   # ← Stage1 checkpoint (직접 지정)
-  data: ../datasets/stage2/data.yaml
+  data: ../datasets/processed/stage2/data.yaml
   epochs: 60
   imgsz: 640
   batch: -1
