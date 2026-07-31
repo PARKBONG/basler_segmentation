@@ -15,6 +15,8 @@ sources:
   - name: rf_a
     path: ../datasets/raw/rf_a   # 받은 파일이 풀릴 위치 (preprocess 가 이 경로를 참조)
                                  # 규약: 모든 원천 데이터는 datasets/raw/<이름>/ 아래에 둡니다.
+                                 # Roboflow 의 train/valid/test 분할은 받은 직후 kimm 처럼
+                                 # images/ + labels/ 하나로 합쳐집니다 (분할은 preprocess 담당).
     roboflow:
       # https://app.roboflow.com/waam-syqaj/weld-distance-8tgl8
       # (dominik-brnjak-gcdtj/weld-distance 를 내 워크스페이스로 fork 한 것)
