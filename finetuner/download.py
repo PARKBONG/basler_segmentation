@@ -27,7 +27,7 @@ from pathlib import Path
 
 import yaml
 
-from common import Stage, load_yaml, normalize_names, roboflow_api_key
+from common import INDEX_RE, Stage, load_yaml, normalize_names, roboflow_api_key
 
 
 class Downloader(Stage):
@@ -62,8 +62,6 @@ class Downloader(Stage):
                 return
         self.log("  data.yaml 을 찾지 못했습니다. 폴더를 직접 확인하세요.")
 
-    INDEX_RE = re.compile(r"^\d+__")   # 파일명 앞 인덱스 접두어 (preprocess 도 같은 규약)
-
     def index_files(self, dest: Path) -> None:
         """
         images/·labels/ 의 파일명 맨 앞에 000000__ 식 6자리 인덱스를 붙인다
@@ -77,7 +75,7 @@ class Downloader(Stage):
         lbl_out = dest / "labels"
         pairs = []
         for img in img_out.iterdir():
-            bare = self.INDEX_RE.sub("", img.stem)
+            bare = INDEX_RE.sub("", img.stem)
             pairs.append((bare, img))
         for i, (bare, img) in enumerate(sorted(pairs)):
             lbl = lbl_out / (img.stem + ".txt")

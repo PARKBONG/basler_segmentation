@@ -53,10 +53,8 @@ class Trainer(Stage):
         """데이터셋 정의를 절대경로로 (Ultralytics 의 상대경로 해석 이슈 회피)."""
         raw = self.cfg.get("train", {}).get("data")
         if not raw:
-            raise SystemExit(
-                f"[{self.label}] {self.config_path.name}: train.data 가 없습니다 — 어떤 "
-                f"데이터셋으로 학습할지 기본값으로 추측하지 않습니다."
-            )
+            self.fail("train.data 가 없습니다 — 어떤 데이터셋으로 학습할지 기본값으로 "
+                      "추측하지 않습니다.")
         path = self.resolve(raw)
         if not path.exists():
             raise FileNotFoundError(
@@ -77,11 +75,8 @@ class Trainer(Stage):
         """
         model = str(self.cfg.get("train", {}).get("model") or "").strip()
         if not model:
-            raise SystemExit(
-                f"[{self.label}] {self.config_path.name}: train.model 이 없습니다 — 시작 "
-                f"가중치를 기본값으로 추측하지 않습니다 (예: yolo26s-seg.pt 또는 "
-                f"runs/segment/stage1/weights/best.pt)."
-            )
+            self.fail("train.model 이 없습니다 — 시작 가중치를 기본값으로 추측하지 "
+                      "않습니다 (예: yolo26s-seg.pt 또는 runs/segment/stage1/weights/best.pt).")
         if "/" not in model and "\\" not in model:
             return model                      # Ultralytics 가 이름으로 해석/다운로드
         path = self.resolve(model)
@@ -207,26 +202,17 @@ class Trainer(Stage):
         """
         stages = self.cfg.get("stages")
         if not isinstance(stages, dict) or not stages:
-            raise SystemExit(
-                f"[{self.label}] {self.config_path.name}: stages 블록이 필요합니다 — 무엇을 "
-                f"돌릴지 기본값으로 정하지 않습니다.\n"
-                f"  stages:\n"
-                f"    preview_aug: false\n"
-                f"    train: true\n"
-                f"    export: true"
-            )
+            self.fail("stages 블록이 필요합니다 — 무엇을 돌릴지 기본값으로 정하지 않습니다.\n"
+                      "  stages:\n"
+                      "    preview_aug: false\n"
+                      "    train: true\n"
+                      "    export: true")
         unknown = [k for k in stages if k not in self.STAGE_KEYS]
         if unknown:
-            raise SystemExit(
-                f"[{self.label}] {self.config_path.name}: stages 에 모르는 키: "
-                f"{', '.join(unknown)}\n"
-                f"  쓸 수 있는 키: {', '.join(self.STAGE_KEYS)}"
-            )
+            self.fail(f"stages 에 모르는 키: {', '.join(unknown)}\n"
+                      f"  쓸 수 있는 키: {', '.join(self.STAGE_KEYS)}")
         if not any(bool(stages.get(k)) for k in self.STAGE_KEYS):
-            raise SystemExit(
-                f"[{self.label}] {self.config_path.name}: stages 가 전부 false 입니다 — "
-                f"할 일이 없습니다."
-            )
+            self.fail("stages 가 전부 false 입니다 — 할 일이 없습니다.")
 
         self.log("stages: " + ", ".join(k for k in self.STAGE_KEYS if stages.get(k)))
         if stages.get("preview_aug"):

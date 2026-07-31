@@ -19,6 +19,7 @@ yaml **내용물**의 경로(../datasets/… 등)는 configs/ 가 아니라 fine
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import yaml
@@ -27,6 +28,11 @@ HERE = Path(__file__).resolve().parent
 CONFIG_DIR = HERE / "configs"
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+# 파일명 앞 인덱스 접두어(000000__) 규약 — download.index_files 가 붙이고,
+# preprocess.split_group 이 rf 사본에서 벗겨 그룹핑합니다. 한쪽만 바꾸면
+# 분할 그룹핑이 조용히 깨지므로 정의는 여기 한 곳에만 둡니다.
+INDEX_RE = re.compile(r"^\d+__")
 
 
 def load_yaml(path: Path) -> dict:
@@ -130,6 +136,10 @@ class Stage:
 
     def log(self, msg: str) -> None:
         print(f"[{self.label}] {msg}")
+
+    def fail(self, msg: str):
+        """설정 문제로 즉시 중단 — 어느 단계의 어느 config 인지 접두사를 일관되게 붙인다."""
+        raise SystemExit(f"[{self.label}] {self.config_path.name}: {msg}")
 
     def run(self) -> None:
         raise NotImplementedError

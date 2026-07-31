@@ -38,16 +38,10 @@ class Evaluator(Stage):
     def run(self) -> None:
         for key in ("weights", "data"):
             if not self.cfg.get(key):
-                raise SystemExit(
-                    f"[{self.label}] {self.config_path.name}: {key} 가 없습니다 — "
-                    f"무엇을 평가할지 기본값으로 추측하지 않습니다."
-                )
+                self.fail(f"{key} 가 없습니다 — 무엇을 평가할지 기본값으로 추측하지 않습니다.")
         split = str(self.cfg.get("split", "val"))
         if split not in ("train", "val", "test"):
-            raise SystemExit(
-                f"[{self.label}] {self.config_path.name}: split 은 train/val/test 중 "
-                f"하나여야 합니다: {split}"
-            )
+            self.fail(f"split 은 train/val/test 중 하나여야 합니다: {split}")
 
         weights = self.resolve(self.cfg["weights"])
         if not weights.exists():

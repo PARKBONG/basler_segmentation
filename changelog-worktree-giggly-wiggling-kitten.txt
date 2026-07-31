@@ -42,3 +42,14 @@
     스테이지별 yaml, CLI 는 --config 하나로 통일 (--stage/--only 는 config 로 이동)
   - 내 자동 삭제 기능 2건(prune_orphan_labels, prune_no_class_pairs)은 유지됨
   - selftest 116건 ALL PASS. push 는 별도 지시 대기
+
+2026-08-01  코드 점검 — class 묶기 정리 (동작 변화 없음)
+  - train pull 선행 (e93fc1c, download/preprocess 설정 완전 분리 수용, ff)
+  - Cropper 클래스 신설 (preprocess.py): 흩어져 있던 crop 설정 파싱·인라인 크롭
+    로직·통계 카운터를 묶음. 순수 기하 함수는 module-level 유지 (selftest 직접 검증)
+  - Stage.fail() (common.py): "[label] config명: ..." SystemExit 접두사 통일
+    (preprocess 3곳 · train 5곳 · eval 2곳 적용)
+  - INDEX_RE 를 common.py 로 일원화 — download 가 붙이고 preprocess.split_group 이
+    벗기는 파일명 인덱스 접두어 규약이 두 파일에 중복 정의돼 있던 것 해소
+  - Stage.cli() 통합(main() 4벌)은 사용자가 원치 않아 제외
+  - selftest 117건 ALL PASS 유지. train merge/push 안 함

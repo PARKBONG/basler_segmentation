@@ -48,13 +48,12 @@ from __future__ import annotations
 
 import argparse
 import random
-import re
 import shutil
 from pathlib import Path
 
 import yaml
 
-from common import IMG_EXTS, Stage, normalize_names, resolve
+from common import IMG_EXTS, INDEX_RE, Stage, normalize_names, resolve
 
 
 # ── 크롭 기하 (순수 함수 — selftest.py 가 직접 검증) ─────────────────────────
@@ -208,6 +207,73 @@ def transform_label(line: str, src_w: int, src_h: int,
     return " ".join(out)
 
 
+class Cropper:
+    """
+    소스 하나의 crop 설정 해석 + 이미지별 창 계산·라벨 변환 + 크롭 통계.
+
+    흩어져 있던 설정 파싱·인라인 크롭 로직·카운터를 묶은 것으로, 기하 계산 자체는
+    모듈의 순수 함수(crop_rect · auto_crop_rect · transform_label)를 그대로 씁니다
+    (selftest 가 직접 검증). 설정은 소스마다 독립입니다 — 공유 기본값 없음.
+    """
+
+    def __init__(self, crop: dict | None) -> None:
+        self.cfg = dict(crop or {})
+        self.enabled = bool(self.cfg.get("enabled"))
+        self.auto = self.cfg.get("auto_crop") or {}
+        self.auto_on = self.enabled and bool(self.auto.get("enabled"))
+        self.min_size = max(int(self.auto.get("min_size", 640) or 0), 0)
+        self.min_area = float(self.cfg.get("min_area", 0.10))
+        self.dropped_empty = 0       # 대상이 하나도 안 남아 제외된 이미지 수
+        self.dropped_instances = 0   # 창 밖으로 나가 폐기된 인스턴스 수
+        self.undersized = 0          # auto_crop 창이 min_size 에 못 미친 이미지 수
+        self.undersized_min = 0      # 그 중 가장 작았던 변 (px)
+
+    def apply(self, img: Path, lines: list) -> tuple | None:
+        """
+        이미지 하나의 (rect, 변환된 라벨 줄) 계산. 크롭 후 남는 대상이 없으면 None
+        (호출 쪽이 그 이미지를 데이터셋에서 제외). 크롭이 꺼져 있으면 (None, 원본 줄).
+        """
+        if not self.enabled:
+            return None, lines
+
+        from PIL import Image   # 크롭을 쓸 때만 필요 (pillow 미설치여도 병합은 동작)
+        with Image.open(img) as im:
+            src_w, src_h = im.width, im.height
+
+        if self.auto_on:
+            # 창을 라벨에서 잡으므로 remap 된 라벨이 먼저 있어야 합니다.
+            bbox = label_bbox(lines, src_w, src_h)
+            if bbox is None:
+                self.dropped_empty += 1    # 폴리곤이 없으면 중심을 못 잡음
+                return None
+            rect = auto_crop_rect(src_w, src_h, bbox, self.auto)
+            got = min(rect[2], rect[3])
+            if got < self.min_size:        # 원본이 작아 더 못 키운 경우
+                self.undersized += 1
+                self.undersized_min = (min(self.undersized_min, got)
+                                       if self.undersized_min else got)
+        else:
+            rect = crop_rect(src_w, src_h, self.cfg)
+
+        kept = [t for t in (transform_label(ln, src_w, src_h, rect, self.min_area)
+                            for ln in lines) if t]
+        self.dropped_instances += len(lines) - len(kept)
+        if not kept:
+            self.dropped_empty += 1
+            return None
+        return rect, kept
+
+    def summary(self) -> str:
+        """로그 한 줄용 크롭 요약."""
+        if not self.enabled:
+            return "crop off"
+        if self.auto_on:
+            return (f"auto crop (margin {self.auto.get('margin', 0.25)}, "
+                    f"min {self.min_size}px)")
+        return (f"crop {self.cfg.get('width') or '원본'}×{self.cfg.get('height') or '원본'} "
+                f"@{self.cfg.get('center_x', 50)}%,{self.cfg.get('center_y', 50)}%")
+
+
 # ── 전처리 단계 ─────────────────────────────────────────────────────────────
 
 class Preprocessor(Stage):
@@ -228,10 +294,7 @@ class Preprocessor(Stage):
 
         for key in ("out", "sources"):
             if not self.cfg.get(key):
-                raise SystemExit(
-                    f"[{self.label}] {self.config_path.name}: {key} 가 없습니다 — "
-                    f"기본값으로 정하지 않습니다."
-                )
+                self.fail(f"{key} 가 없습니다 — 기본값으로 정하지 않습니다.")
         # 로그용 스테이지 이름은 파일명에서 (preprocess.stage1.yaml → stage1)
         stem = self.config_path.stem
         self.stage_name = stem.split(".", 1)[1] if "." in stem else stem
@@ -260,10 +323,8 @@ class Preprocessor(Stage):
         by_name = {s["name"]: s for s in sources}
         unknown = [t for t in self.only if t not in by_name]
         if unknown:
-            raise SystemExit(
-                f"[{self.label}] only 에 없는 소스 이름: {', '.join(unknown)}\n"
-                f"  stage '{self.stage_name}' 의 소스: {', '.join(by_name) or '(없음)'}"
-            )
+            self.fail(f"only 에 없는 소스 이름: {', '.join(unknown)}\n"
+                      f"  stage '{self.stage_name}' 의 소스: {', '.join(by_name) or '(없음)'}")
         return [by_name[t] for t in self.only]
 
     # -- 소스 읽기 -------------------------------------------------------
@@ -335,23 +396,6 @@ class Preprocessor(Stage):
             out.append(" ".join(parts))
         return out
 
-    @staticmethod
-    def crop_config(src: dict) -> dict:
-        """소스별 크롭 설정. 공유 기본값 없이 소스마다 독립입니다."""
-        return dict(src.get("crop") or {})
-
-    @staticmethod
-    def crop_summary(crop: dict) -> str:
-        """로그 한 줄용 크롭 요약."""
-        if not crop.get("enabled"):
-            return "crop off"
-        auto = crop.get("auto_crop") or {}
-        if auto.get("enabled"):
-            return (f"auto crop (margin {auto.get('margin', 0.25)}, "
-                    f"min {auto.get('min_size', 640)}px)")
-        return (f"crop {crop.get('width') or '원본'}×{crop.get('height') or '원본'} "
-                f"@{crop.get('center_x', 50)}%,{crop.get('center_y', 50)}%")
-
     def collect_source(self, src: dict) -> list:
         """
         소스에서 (img_path, [최종 라벨 줄], rect) 목록 수집.
@@ -374,14 +418,7 @@ class Preprocessor(Stage):
 
         src_names = normalize_names(dy.get("names"))
         class_map = src.get("class_map", {})
-        crop = self.crop_config(src)
-        cropping = bool(crop.get("enabled"))
-        auto = crop.get("auto_crop") or {}
-        auto_on = cropping and bool(auto.get("enabled"))
-        min_size = max(int(auto.get("min_size", 640) or 0), 0)
-        min_area = float(crop.get("min_area", 0.10))
-        if cropping:
-            from PIL import Image   # 크롭을 쓸 때만 필요 (pillow 미설치여도 병합은 동작)
+        cropper = Cropper(src.get("crop"))
 
         items = []
         seen = set()  # 같은 이미지가 여러 split 에 중복 등록되는 것 방지
@@ -404,37 +441,26 @@ class Preprocessor(Stage):
                     no_class.append((img, lbl))
                     continue
 
-                rect = None
-                if cropping:
-                    with Image.open(img) as im:
-                        src_w, src_h = im.width, im.height
-                    if auto_on:
-                        # 창을 라벨에서 잡으므로 remap 된 라벨이 먼저 있어야 합니다.
-                        bbox = label_bbox(lines, src_w, src_h)
-                        if bbox is None:
-                            self._dropped_empty += 1   # 폴리곤이 없으면 중심을 못 잡음
-                            continue
-                        rect = auto_crop_rect(src_w, src_h, bbox, auto)
-                        got = min(rect[2], rect[3])
-                        if got < min_size:             # 원본이 작아 더 못 키운 경우
-                            self._undersized += 1
-                            self._undersized_min = (min(self._undersized_min, got)
-                                                    if self._undersized_min else got)
-                    else:
-                        rect = crop_rect(src_w, src_h, crop)
-                    kept = [t for t in (transform_label(ln, src_w, src_h, rect, min_area)
-                                        for ln in lines) if t]
-                    self._dropped_instances += len(lines) - len(kept)
-                    lines = kept
-                    if not lines:
-                        self._dropped_empty += 1
-                        continue
+                cropped = cropper.apply(img, lines)
+                if cropped is None:
+                    continue
+                rect, lines = cropped
 
                 items.append((img, lines, rect))
                 seen.add(img.name)
 
         self.prune_no_class_pairs(src["name"], class_map, items, no_class)
+        self.absorb_crop_stats(cropper)
         return items
+
+    def absorb_crop_stats(self, cropper: Cropper) -> None:
+        """소스별 Cropper 의 통계를 실행 전체(run 마지막 로그) 카운터에 합산."""
+        self._dropped_empty += cropper.dropped_empty
+        self._dropped_instances += cropper.dropped_instances
+        if cropper.undersized:
+            self._undersized += cropper.undersized
+            self._undersized_min = (min(self._undersized_min, cropper.undersized_min)
+                                    if self._undersized_min else cropper.undersized_min)
 
     def prune_no_class_pairs(self, name: str, class_map: dict,
                              items: list, pairs: list) -> None:
@@ -597,7 +623,7 @@ class Preprocessor(Stage):
         stem 전체가 그룹이어야 합니다 — 캡처 파일명은 인덱스를 빼면 세션
         타임스탬프만 남아 세션 전체가 한 그룹으로 뭉쳐 버리기 때문입니다.
         """
-        bare = re.sub(r"^\d+__", "", stem)
+        bare = INDEX_RE.sub("", stem)
         return bare.split(".rf.")[0] if ".rf." in bare else stem
 
     def run(self) -> None:
@@ -656,7 +682,7 @@ class Preprocessor(Stage):
             n_train += counts["train"]
             n_val += counts["val"]
             n_test += counts["test"]
-            how = self.crop_summary(self.crop_config(src))
+            how = Cropper(src.get("crop")).summary()
             self.log(f"{src['name']}: train +{counts['train']} (oversample x{oversample}), "
                      f"val +{counts['val']}, test +{counts['test']}  [{how}]")
 
@@ -684,8 +710,8 @@ class Preprocessor(Stage):
         if not val_dirs:
             # 빈 val 로 학습에 들어가면 Ultralytics 가 데이터셋 빌드에서 죽습니다.
             # 산출물은 이미 다 썼으므로 여기서 멈춰도 이번 작업은 보존됩니다.
-            raise SystemExit(
-                f"[{self.label}] val 산출물이 하나도 없습니다 — 이 data.yaml 로 train.py 를 "
+            self.fail(
+                f"val 산출물이 하나도 없습니다 — 이 data.yaml 로 train.py 를 "
                 f"돌리면 빈 검증셋으로 죽습니다.\n"
                 f"  val_ratio > 0 인 소스를 처리해 val 을 만들어 두세요 "
                 f"(단일/stage2 는 인도메인 kimm, stage1 은 공개셋에서 뗍니다).\n"
