@@ -74,3 +74,10 @@
   - 비율 통일: kimm val 0.2/test 0.1, rf_a val 0.1 (스테이지별 상이하던 것 단일화)
     주의: train.single 의 val 에 공개(rf_a) val 이 섞이게 됨 — 원치 않으면 별도 논의
   - selftest 128건 ALL PASS (소스별 data.yaml 검증 추가). train push 대기
+
+2026-08-01  train merge — OBB 모델 전환과 결합 (conflict 해소)
+  - push 직전 train 에 OBB 전환 커밋(633094f·da50469) 등장 → pull 시 train/eval
+    config 7개 conflict (같은 두 줄을 서로 다른 목적으로 수정)
+  - 사용자 승인 후 양쪽 결합으로 해소: train 쪽 OBB 모델/가중치(yolo26s-obb.pt,
+    runs/obb/...) + 내 쪽 새 data 경로(processed/rf_a·kimm·통합)
+  - selftest 128건 ALL PASS 확인 후 train ff merge + origin push (사용자 지시)
