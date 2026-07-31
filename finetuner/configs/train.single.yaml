@@ -2,7 +2,7 @@
 #   python train.py --config train_config.yaml
 # (--config 는 필수입니다. 생략하면 train.py 가 오류로 멈춥니다 — 조용한 기본값 없음)
 # 값은 전부 여기서 수정합니다. 2단계 학습은 train_config.stage1/stage2.yaml 을 쓰세요.
-# 데이터셋 정의는 pipeline.yaml 이 소유하며, preprocess.py 산출물을 data 로 가리킵니다.
+# 데이터셋 정의는 preprocess.single.yaml 이 소유하며, 그 산출물을 data 로 가리킵니다.
 
 # 무엇을 돌릴지 — 블록 자체가 필수이며, 키를 오타내면 오류로 알려줍니다.
 # 재학습 없이 export 만: train: false, export: true

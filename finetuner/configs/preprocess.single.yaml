@@ -1,17 +1,77 @@
 # 단일 스테이지 — kimm+공개셋을 한 데이터셋으로 (baseline / 빠른 실험용).
 #   python preprocess.py --config preprocess.single.yaml
-# 소스 정의(names/sources/seed/preview)는 pipeline.yaml 에서 오고,
-# 이 파일은 "어떤 소스를(use) 어떤 비율로 어디에(out) 굽는지"만 정합니다.
-# use 의 값은 pipeline.yaml 의 같은 이름 소스 정의를 필드 단위로 덮어씁니다.
-#   val_ratio  이 소스에서 val 로 뗄 비율 (그룹 단위 분할 → 근중복 누수 없음)
-#   test_ratio 최종 1회 평가용 test 비율 (eval)
-# out 은 스테이지마다 달라야 하며 train.*.yaml 의 train.data 와 1:1 짝입니다.
+#
+# 이 파일이 이 스테이지의 전처리 전부를 소유합니다 — 다른 yaml 을 참조하지 않습니다.
+# 스테이지마다 소스 구성·크롭·비율을 다르게 가져갈 수 있고, 같은 소스 폴더
+# (datasets/raw/<이름>/)를 쓰는 다른 스테이지와는 path 규약만 공유합니다.
+# 경로는 이 yaml(=finetuner/ 폴더) 기준 상대경로 또는 절대경로.
+#
+# 소스 인자:
+#   path        소스 폴더 (data.yaml + images/… + labels/…)
+#   class_map   소스클래스명 → 최종클래스명 (여기 없는 소스 클래스는 제외)
+#   val_ratio   이 소스에서 val 로 뗄 비율 (그룹 단위 분할 → 근중복 누수 없음)
+#   test_ratio  최종 1회 평가용 test 비율 (eval.final.yaml)
+#   oversample  train 강조 배수 (val/test 에는 적용 안 됨)
+#   crop        이미지+폴리곤 라벨을 함께 크롭 (소스마다 독립, 공유 기본값 없음)
+#   resize      크롭 후 리사이즈. null 이면 그대로 (학습이 imgsz 로 letterbox 함)
 
-pipeline: pipeline.yaml      # 공유 정의 위치 (configs/ 기준)
+# 최종 통합 클래스 — index가 최종 class id. class_map의 목적지 이름은 반드시 여기 존재해야 함.
+names:
+  0: wire
 
-out: ../datasets/processed   # train.single.yaml 이 읽음
-use:
-  kimm: {val_ratio: 0.2, test_ratio: 0.0}   # 검증은 in-domain 에서만
-  rf_a: {val_ratio: 0.0}                    # 공개셋은 train 전용 (검증 오염 방지)
+seed: 0    # 분할 시드 — 소스별로 파생되므로 소스를 추가/제거해도 다른 소스의 분할이 안 바뀜
+
+# 산출물에서 몇 장을 골라 라벨 폴리곤을 그려 out/_preview/ 에 저장합니다.
+preview:
+  enabled: true
+  count: 12
+
+out: ../datasets/processed   # train.single.yaml 의 train.data 와 1:1 짝
+
+sources:
+  # ── 내 카메라 원본 (비공개, 인도메인 = 귀중) ─────────────────────────
+  #   앱(BaslerLiveView)의 REC 가 크롭 전 풀사이즈 PNG 를 images/ 에 쌓습니다.
+  #   라벨링 결과를 labels/ 에 넣고 data.yaml 을 두 줄짜리로 만들어 두세요:
+  #       names: {0: wire}
+  #       train: images
+  - name: kimm
+    path: ../datasets/raw/kimm
+    class_map:
+      wire: wire
+    val_ratio: 0.2               # 검증은 in-domain 에서만
+    test_ratio: 0.0
+    oversample: 1
+    crop:
+      enabled: true
+      # 크롭 창 크기(픽셀). 0 이면 그 축은 원본 전체를 씁니다.
+      # 원본보다 큰 값을 적으면 원본 크기로 클램프됩니다.
+      width: 640
+      height: 640
+      # 창 위치(%). 앱 FrameCropper 와 같은 규약: 0 = 왼쪽/위 끝, 50 = 중앙,
+      # 100 = 오른쪽/아래 끝 → 앱 툴바 슬라이더에서 찾은 값을 그대로 옮겨 적으세요.
+      center_x: 50
+      center_y: 50
+      # 자동 크롭 — 창의 중심·크기를 이미지마다 라벨(wire)에서 직접 잡습니다.
+      # 켜면 위의 width/height/center_x/center_y 는 무시됩니다.
+      auto_crop:
+        enabled: false
+        margin: 0.25             # 라벨 주위 여유 (경계상자 크기 대비 비율)
+        min_size: 640            # 창 한 변의 하한 = 경고 기준선
+      # 크롭 후 남은 폴리곤 면적/원래 면적이 이 값 미만이면 인스턴스 폐기.
+      min_area: 0.10
+    resize: null
+
+  # ── 공개 데이터셋 (보조) — download.py(configs/download.yaml)로 먼저 받아두세요 ──
+  - name: rf_a
+    path: ../datasets/raw/rf_a
+    class_map:
+      # 이 소스의 클래스는 [melt pool, seam, torch, wire] — 그중 wire 만 쓰고
+      # 나머지는 버립니다. 이름이 다르면 개명해서 통일 (예: cable: wire).
+      wire: wire
+    val_ratio: 0.0               # 공개셋은 train 전용 (검증 오염 방지)
+    oversample: 1
+    crop:
+      enabled: false             # 공개셋은 이미 잘려 있음
+    resize: null
 
 # only: [kimm]   # 일부 소스만 다시 굽기 (다른 소스 산출물은 유지). 평소엔 주석.

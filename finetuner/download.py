@@ -1,7 +1,7 @@
 """
 공개(Roboflow Universe) 데이터셋을 SDK로 다운로드.
 
-configs/pipeline.yaml 의 sources 중 roboflow: 블록이 있는 소스를 해당 path 폴더에
+configs/download.yaml 의 sources 를 해당 path 폴더에
 받아옵니다. preprocess.py 도 같은 파일의 같은 path 를 읽으므로 따로 맞출 게 없습니다
 (preprocess 는 폴더가 없으면 "download 를 먼저 돌리라"고 알려줍니다).
 
@@ -31,9 +31,9 @@ from common import Stage, load_yaml, normalize_names, roboflow_api_key
 
 
 class Downloader(Stage):
-    """configs/pipeline.yaml 의 공개 데이터셋을 내려받는 단계."""
+    """configs/download.yaml 의 공개 데이터셋을 내려받는 단계."""
 
-    config_glob = "pipeline.yaml"   # 후보가 이 하나뿐 → --config 없이 자동 선택
+    config_glob = "download.yaml"   # 후보가 이 하나뿐 → --config 없이 자동 선택
     label = "download"
 
     @staticmethod
