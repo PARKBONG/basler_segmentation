@@ -76,7 +76,9 @@ sources:
       #  정규화 폴리곤 txt). 학습 모델은 train_config*.yaml 의 train.model 이 정합니다.
       format: yolov11
     class_map:
-      wire: wire                 # 예: 공개셋의 'cable' 을 최종 'wire' 로 통일
+      # 이 소스의 클래스는 [melt pool, seam, torch, wire] — 그중 wire 만 쓰고
+      # 나머지는 버립니다. 이름이 다르면 개명해서 통일 (예: cable: wire).
+      wire: wire
     oversample: 1
     crop:
       enabled: false             # 공개셋은 이미 잘려 있음. 켜려면 width/height/center_*
