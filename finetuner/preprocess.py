@@ -538,22 +538,23 @@ class Preprocessor(Stage):
     def write_preview(self, count: int) -> None:
         """
         산출물에서 몇 장을 골라 라벨 폴리곤을 그려 저장 — 크롭·라벨 변환이 맞는지
-        눈으로 확인하는 용도. 소스가 골고루 섞이도록 정렬 후 균등 간격으로 뽑습니다.
+        눈으로 확인하는 용도. 소스별로 out/<이름>/preview/ 에 count 장씩,
+        split 을 섞어 정렬 후 균등 간격으로 뽑습니다.
         """
         from PIL import Image, ImageDraw
 
-        preview_dir = self.out / "_preview"
-        if preview_dir.exists():
-            shutil.rmtree(preview_dir)
-        preview_dir.mkdir(parents=True, exist_ok=True)
-
         written = 0
-        for split in ("train", "val", "test"):
+        for sub in sorted(d for d in self.out.iterdir()
+                          if d.is_dir() and (d / "images").is_dir()):
+            preview_dir = sub / "preview"
+            if preview_dir.exists():
+                shutil.rmtree(preview_dir)
+            preview_dir.mkdir(parents=True, exist_ok=True)
+
             images = []
-            for sub in sorted(d for d in self.out.iterdir()
-                              if d.is_dir() and d.name != "_preview"):
-                images += sorted((sub / f"images/{split}").glob("*"))
-            images = [p for p in images if p.suffix.lower() in IMG_EXTS]
+            for split in ("train", "val", "test"):
+                images += sorted(p for p in (sub / f"images/{split}").glob("*")
+                                 if p.suffix.lower() in IMG_EXTS)
             if not images:
                 continue
             take = min(count, len(images))
@@ -571,10 +572,11 @@ class Preprocessor(Stage):
                         pts = [(float(v[j]) * canvas.width, float(v[j + 1]) * canvas.height)
                                for j in range(1, len(v) - 1, 2)]
                         draw.polygon(pts, outline=(255, 40, 40))
-                    canvas.save(preview_dir / f"{split}__{path.stem}.png")
+                    canvas.save(preview_dir / f"{path.parent.name}__{path.stem}.png")
                 written += 1
+            self.log(f"미리보기: {sub.name}/preview/ {take}장")
 
-        self.log(f"미리보기 {written}장 → {preview_dir}")
+        self.log(f"미리보기 총 {written}장 (소스별 preview/ 폴더)")
 
     # -- 실행 ------------------------------------------------------------
 
@@ -593,7 +595,7 @@ class Preprocessor(Stage):
                 if has_images(self.out / n / "images/test")]
 
         stale = sorted(d.name for d in self.out.iterdir()
-                       if d.is_dir() and d.name != "_preview" and d.name not in all_names)
+                       if d.is_dir() and d.name not in all_names)
         if stale:
             self.log(f"경고: 이 스테이지의 sources 에 없는 산출물 폴더는 data.yaml 에서 "
                      f"제외했습니다: {', '.join(stale)} (안 쓰면 지우세요)")

@@ -13,7 +13,7 @@ preview:
   enabled: true
   count: 12
 
-out: ../datasets/stage1      # train.stage1.yaml 의 train.data 와 1:1 짝
+out: ../datasets/processed/stage1   # train.stage1.yaml 의 train.data 와 1:1 짝
 
 sources:
   - name: rf_a

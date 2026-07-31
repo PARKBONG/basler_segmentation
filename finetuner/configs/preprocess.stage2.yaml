@@ -14,7 +14,7 @@ preview:
   enabled: true
   count: 12
 
-out: ../datasets/stage2      # train.stage2.yaml 의 train.data 와 1:1 짝
+out: ../datasets/processed/stage2   # train.stage2.yaml 의 train.data 와 1:1 짝
 
 sources:
   - name: kimm

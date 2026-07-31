@@ -73,7 +73,7 @@ python eval.py       --config eval.final.yaml     # in-domain test — 최종 1�
 ## datasets/ 레이아웃
 
 전부 `.gitignore` 대상입니다 (용량). 규약: **원천은 `raw/<소스이름>/`, 산출물은
-`processed/<소스이름>/`** — 양쪽에서 같은 이름을 씁니다.
+`processed/<스테이지>/<소스이름>/`** — 소스 이름은 양쪽에서 같은 것을 씁니다.
 
 ```
 datasets/
@@ -83,18 +83,19 @@ datasets/
       labels/         라벨링 결과 (YOLO seg 폴리곤)
       data.yaml
     rf_*/             download.py 가 받은 공개셋 (내부는 Roboflow export 규약 그대로)
-  processed/          preprocess.single.yaml 산출물 (단일 스테이지, + _preview/)
-    data.yaml         소스 산출물 전체를 묶는 학습용 정의 = train.py 가 읽는 파일
-    kimm/             images|labels/{train,val,test}   (test 는 test_ratio > 0 일 때만)
-    rf_*/             images|labels/{train,val,test}
-  stage1/             preprocess.stage1.yaml 산출물 (공개 전용 — 공개 val 포함)
-  stage2/             preprocess.stage2.yaml 산출물 (in-domain — val + 최종 test)
+  processed/          preprocess.py 산출물 — 스테이지별 폴더
+    single/           preprocess.single.yaml 산출물 (단일 스테이지)
+      data.yaml       소스 산출물 전체를 묶는 학습용 정의 = train.py 가 읽는 파일
+      kimm/           images|labels/{train,val,test} + preview/  (test 는 test_ratio > 0 일 때만)
+      rf_*/           images|labels/{train,val,test} + preview/
+    stage1/           preprocess.stage1.yaml 산출물 (공개 전용 — 공개 val 포함)
+    stage2/           preprocess.stage2.yaml 산출물 (in-domain — val + 최종 test)
 ```
 
-2단계 학습에서는 데이터셋도 두 벌입니다 — `stage1/` 은 공개 데이터만(warm-up + 공개 val),
-`stage2/` 는 in-domain 만(train/val/test). in-domain `test` 는 최종 stage2 모델에
-**딱 한 번** 씁니다 (`eval.final.yaml`). data.yaml 의 `test:` 키는 test 산출물이
-있을 때만 생깁니다.
+2단계 학습에서는 데이터셋도 두 벌입니다 — `processed/stage1/` 은 공개 데이터만
+(warm-up + 공개 val), `processed/stage2/` 는 in-domain 만(train/val/test). in-domain
+`test` 는 최종 stage2 모델에 **딱 한 번** 씁니다 (`eval.final.yaml`). data.yaml 의
+`test:` 키는 test 산출물이 있을 때만 생깁니다.
 
 `kimm` 의 라벨링만 수동 단계입니다. `raw/kimm/data.yaml` 은 두 줄이면 됩니다:
 
@@ -174,7 +175,7 @@ python preprocess.py --config preprocess.single.yaml
 
 - 크롭 창에 걸친 인스턴스는 잘리고, 남은 면적이 `min_area` 미만이면 그 인스턴스는 폐기됩니다.
 - 살아남은 인스턴스가 하나도 없으면 그 이미지는 데이터셋에서 제외됩니다.
-- `preview.enabled: true` 면 산출물 몇 장에 라벨을 그려 `processed/_preview/` 에 저장합니다 —
+- `preview.enabled: true` 면 산출물 몇 장에 라벨을 그려 소스별 `<out>/<소스>/preview/` 에 저장합니다 —
   크롭이 라벨을 제대로 따라 잘랐는지 눈으로 확인하세요.
 
 ### 자동 크롭 (`auto_crop`)

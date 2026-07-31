@@ -1,7 +1,7 @@
 # Stage 1 (공개 warm-up) 파인튜닝 설정.
 #   python train.py --config train_config.stage1.yaml
 # (--config 는 필수입니다. 생략하면 train.py 가 오류로 멈춥니다 — 조용한 기본값 없음)
-# 데이터: preprocess.py 산출물 datasets/stage1/data.yaml (공개 데이터만, in-domain 미포함)
+# 데이터: preprocess.py 산출물 datasets/processed/stage1/data.yaml (공개 데이터만, in-domain 미포함)
 # 목적: COCO 사전학습 위에 "와이어/선형 객체" 도메인 지식을 주입 (배포용 아님).
 
 # 무엇을 돌릴지 — 블록 자체가 필수이며, 키를 오타내면 오류로 알려줍니다.
@@ -13,7 +13,7 @@ stages:
 
 train:
   model: yolo26s-seg.pt      # COCO 사전학습에서 시작 (없으면 Ultralytics가 자동 다운로드)
-  data: ../datasets/stage1/data.yaml
+  data: ../datasets/processed/stage1/data.yaml
   epochs: 100
   imgsz: 640                 # 앱이 640으로 추론 → 640 유지
   batch: -1                  # -1 = GPU 메모리에 맞춰 AutoBatch. 정수로 고정 가능

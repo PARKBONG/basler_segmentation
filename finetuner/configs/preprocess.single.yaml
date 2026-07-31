@@ -26,7 +26,7 @@ preview:
   enabled: true
   count: 12
 
-out: ../datasets/processed   # train.single.yaml 의 train.data 와 1:1 짝
+out: ../datasets/processed/single   # train.single.yaml 의 train.data 와 1:1 짝
 
 sources:
   # ── 내 카메라 원본 (비공개, 인도메인 = 귀중) ─────────────────────────
