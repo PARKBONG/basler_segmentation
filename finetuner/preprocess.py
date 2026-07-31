@@ -24,6 +24,11 @@
   (width/height/center_x/center_y), auto_crop 으로 이미지마다 라벨에서 직접 잡습니다.
 - config 의 only: 에 이름을 적으면 그 소스만 다시 굽습니다 (생략하면 스테이지 전체). 산출물이
   소스별 폴더라서 나머지 소스의 기존 산출물은 유지되고, data.yaml 만 매번 다시 묶입니다.
+- 마음에 안 드는 이미지는 원천(raw)에서 이미지 파일만 지우면 됩니다 — 다음 실행에서
+  짝 라벨(.txt)이 자동 삭제됩니다 (이미지가 하나도 없는 폴더는 경로 실수로 보고 보호).
+- 라벨에 지정 클래스(class_map)가 하나도 없는 데이터는 이미지+라벨 쌍째 원천에서
+  자동 삭제됩니다 (예: rf_a 에 wire 없는 데이터). 단, 소스에 지정 클래스가 있는
+  데이터가 한 쌍도 없으면 class_map 오타로 보고 지우지 않습니다.
 
 증강은 여기서 하지 않습니다. Ultralytics 가 학습 중에 온라인 증강을 하므로
 train.*.yaml 의 증강 하이퍼파라미터로 조절하고, 결과 확인은
@@ -305,6 +310,29 @@ class Preprocessor(Stage):
                 break
         return Path(*parts)
 
+    def prune_orphan_labels(self, img_dir: Path, lbl_dir: Path, name: str) -> None:
+        """
+        이미지가 지워진 라벨(.txt)을 원천에서 함께 지운다 — 데이터셋 항목 삭제는
+        이미지 파일만 지우면 되도록 (짝 라벨은 다음 실행에서 여기서 정리).
+
+        이미지가 하나도 없는데 라벨만 있으면 경로 실수일 가능성이 높으므로,
+        지우지 않고 경고만 합니다 (라벨 폴더를 통째로 날리는 사고 방지).
+        """
+        if not lbl_dir.is_dir():
+            return
+        stems = {p.stem for p in img_dir.iterdir() if p.suffix.lower() in IMG_EXTS}
+        orphans = sorted(p for p in lbl_dir.glob("*.txt") if p.stem not in stems)
+        if not orphans:
+            return
+        if not stems:
+            self.log(f"{name}: 이미지는 0장인데 라벨만 {len(orphans)}개 있습니다 — "
+                     f"경로 실수 같아 지우지 않습니다 ({img_dir})")
+            return
+        for p in orphans:
+            p.unlink()
+        self.log(f"{name}: 이미지가 지워진 라벨 {len(orphans)}개 자동 삭제 "
+                 f"(예: {orphans[0].name})")
+
     def remap_lines(self, text: str, src_names: dict, class_map: dict) -> list:
         """라벨의 class id 를 최종 id 로 remap. class_map 에 없는 클래스 줄은 제거."""
         out = []
@@ -374,11 +402,13 @@ class Preprocessor(Stage):
 
         items = []
         seen = set()  # 같은 이미지가 여러 split 에 중복 등록되는 것 방지
+        no_class = []  # 라벨은 있지만 지정 클래스가 없는 (img, lbl) 쌍 — 마지막에 일괄 삭제
         for key in ("train", "val", "valid", "test"):
             img_dir = self.find_split_image_dir(src_dir, dy, key)
             if img_dir is None:
                 continue
             lbl_dir = self.labels_dir_for(img_dir)
+            self.prune_orphan_labels(img_dir, lbl_dir, src["name"])
             for img in sorted(img_dir.iterdir()):
                 if img.suffix.lower() not in IMG_EXTS or img.name in seen:
                     continue
@@ -388,6 +418,7 @@ class Preprocessor(Stage):
                 lines = self.remap_lines(lbl.read_text(encoding="utf-8"),
                                          src_names, class_map)
                 if not lines:
+                    no_class.append((img, lbl))
                     continue
 
                 rect = None
@@ -418,7 +449,31 @@ class Preprocessor(Stage):
 
                 items.append((img, lines, rect))
                 seen.add(img.name)
+
+        self.prune_no_class_pairs(src["name"], class_map, items, no_class)
         return items
+
+    def prune_no_class_pairs(self, name: str, class_map: dict,
+                             items: list, pairs: list) -> None:
+        """
+        라벨에 지정 클래스(class_map)가 하나도 없는 이미지+라벨 쌍을 원천에서 지운다
+        (예: rf_a 에서 wire 없이 다른 클래스만 있는 데이터는 이 파이프라인에 쓸모없음).
+
+        소스에 지정 클래스가 있는 데이터가 한 쌍도 없으면 class_map 오타일 가능성이
+        높으므로, 지우지 않고 경고만 합니다 (소스를 통째로 날리는 사고 방지).
+        크롭 때문에 대상이 사라진 이미지는 여기 해당하지 않습니다 (원본 라벨 기준).
+        """
+        if not pairs:
+            return
+        if not items:
+            self.log(f"{name}: 지정 클래스({', '.join(class_map) or '없음'})가 있는 데이터가 "
+                     f"한 쌍도 없습니다 — class_map 오타 같아 {len(pairs)}쌍을 지우지 않습니다")
+            return
+        for img, lbl in pairs:
+            img.unlink()
+            lbl.unlink()
+        self.log(f"{name}: 지정 클래스 없는 데이터 {len(pairs)}쌍 삭제 "
+                 f"(예: {pairs[0][0].name})")
 
     # -- 쓰기 ------------------------------------------------------------
 
