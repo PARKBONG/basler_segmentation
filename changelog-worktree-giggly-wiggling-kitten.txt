@@ -34,3 +34,11 @@
   - 소스 전체가 미해당이면 class_map 오타로 보고 삭제 안 함 (전멸 보호, 경고만)
   - 크롭으로 대상이 사라진 이미지는 삭제 대상 아님 (원본 라벨 기준)
   - selftest 3건 추가 (ALL PASS), README 갱신. train merge/push 안 함
+  - (이후 87a06a8·f985af9 를 사용자 지시로 train merge + push)
+
+2026-08-01  train pull (configs/ 재구성 수용)
+  - train(e1ae012) fast-forward pull — cached-tumbling-mountain 의 재구성 포함:
+    configs/ 폴더 신설, pipeline.yaml(구 download_config) + preprocess/train/eval
+    스테이지별 yaml, CLI 는 --config 하나로 통일 (--stage/--only 는 config 로 이동)
+  - 내 자동 삭제 기능 2건(prune_orphan_labels, prune_no_class_pairs)은 유지됨
+  - selftest 116건 ALL PASS. push 는 별도 지시 대기
