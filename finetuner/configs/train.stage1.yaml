@@ -12,7 +12,7 @@ stages:
   export: false
 
 train:
-  model: yolo26s-seg.pt      # COCO 사전학습에서 시작 (없으면 Ultralytics가 자동 다운로드)
+  model: yolo26s-obb.pt      # COCO 사전학습에서 시작 (없으면 Ultralytics가 자동 다운로드)
   data: ../datasets/processed/stage1/data.yaml
   epochs: 100
   imgsz: 640                 # 앱이 640으로 추론 → 640 유지
@@ -22,8 +22,8 @@ train:
   cache: true                # 이미지를 RAM 상주 → epoch 마다 디스크 재읽기 제거(속도↑).
                              #   공개 5000장 ≈ 수~십 GB RAM. 부족하면 disk 로: cache: disk
   patience: 30               # 개선 없는 epoch 수(EarlyStopping)
-  project: runs/segment      # 결과 저장 루트
-  name: stage1               # runs/segment/stage1
+  project: runs/obb      # 결과 저장 루트
+  name: stage1               # runs/obb/stage1
   optimizer: auto
   lr0: 0.01                  # full 학습 (와이어 특징 습득)
   freeze: 0                  # 전체 학습

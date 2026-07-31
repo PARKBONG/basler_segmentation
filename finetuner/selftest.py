@@ -628,7 +628,7 @@ def test_trainer_config_required(root: Path) -> None:
 
 def test_trainer_stages_guard(root: Path) -> None:
     """stages 블록 누락 · 키 오타 · 전부 false 는 모두 오류."""
-    base = {"train": {"model": "yolo26s-seg.pt", "data": "d/data.yaml"}}
+    base = {"train": {"model": "yolo26s-obb.pt", "data": "d/data.yaml"}}
 
     p = write_train_cfg(root, "t_nostages.yaml", base)
     expect_raises("stages: 블록 없으면 SystemExit", SystemExit, Trainer(p).run, "stages 블록")
@@ -658,7 +658,7 @@ def test_trainer_stages_guard(root: Path) -> None:
 def test_trainer_data_and_weights(root: Path) -> None:
     """데이터셋·시작 가중치도 기본값으로 추측하지 않습니다."""
     p = write_train_cfg(root, "t_nodata.yaml",
-                        {"stages": {"train": True}, "train": {"model": "yolo26s-seg.pt"}})
+                        {"stages": {"train": True}, "train": {"model": "yolo26s-obb.pt"}})
     expect_raises("data: train.data 없으면 SystemExit", SystemExit,
                   Trainer(p).data_path, "train.data")
 
@@ -670,15 +670,15 @@ def test_trainer_data_and_weights(root: Path) -> None:
     # 경로 구분자가 없으면 Ultralytics 가 받아올 이름 → 존재 확인 없이 그대로
     p = write_train_cfg(root, "t_name.yaml",
                         {"stages": {"train": True}, "train": {"data": "d/data.yaml",
-                                                              "model": "yolo26s-seg.pt"}})
+                                                              "model": "yolo26s-obb.pt"}})
     check("model: 모델 이름은 그대로 통과",
-          Trainer(p).start_weights() == "yolo26s-seg.pt")
+          Trainer(p).start_weights() == "yolo26s-obb.pt")
 
     # 경로 형태인데 파일이 없으면 오류 (COCO 로 조용히 되돌아가지 않음)
     p = write_train_cfg(root, "t_badckpt.yaml",
                         {"stages": {"train": True},
                          "train": {"data": "d/data.yaml",
-                                   "model": "runs/segment/stage1/weights/best.pt"}})
+                                   "model": "runs/obb/stage1/weights/best.pt"}})
     expect_raises("model: 없는 checkpoint 는 FileNotFoundError", FileNotFoundError,
                   Trainer(p).start_weights, "시작 가중치가 없습니다")
 

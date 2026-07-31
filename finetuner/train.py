@@ -1,5 +1,5 @@
 """
-yolo26s-seg 파인튜닝 + ONNX export.
+yolo26s-obb 파인튜닝 + ONNX export.
 
 코드만 여기(로컬)에서 작성하고, 실제 학습은 RTX 5090 머신에서 돌립니다.
 데이터셋은 preprocess.py 산출물의 data.yaml 을 사용합니다.
@@ -70,13 +70,13 @@ class Trainer(Stage):
         키를 빠뜨렸을 때 조용히 COCO 에서 다시 시작하면 warm-start 가 사라집니다.
 
         경로 구분자가 있으면 체크포인트 파일로 보고 finetuner/ 기준으로 해석하고 존재를
-        확인합니다. 구분자가 없으면(`yolo26s-seg.pt`) Ultralytics 가 받아올 모델 이름이라
+        확인합니다. 구분자가 없으면(`yolo26s-obb.pt`) Ultralytics 가 받아올 모델 이름이라
         그대로 넘깁니다.
         """
         model = str(self.cfg.get("train", {}).get("model") or "").strip()
         if not model:
             self.fail("train.model 이 없습니다 — 시작 가중치를 기본값으로 추측하지 "
-                      "않습니다 (예: yolo26s-seg.pt 또는 runs/segment/stage1/weights/best.pt).")
+                      "않습니다 (예: yolo26s-obb.pt 또는 runs/obb/stage1/weights/best.pt).")
         if "/" not in model and "\\" not in model:
             return model                      # Ultralytics 가 이름으로 해석/다운로드
         path = self.resolve(model)
@@ -93,8 +93,8 @@ class Trainer(Stage):
         if self._save_dir is not None:
             return self._save_dir / "weights" / "best.pt"
         train_cfg = self.cfg.get("train", {})
-        project = self.resolve(train_cfg.get("project", "runs/segment"))
-        name = train_cfg.get("name", "yolo26s-seg-finetune")
+        project = self.resolve(train_cfg.get("project", "runs/obb"))
+        name = train_cfg.get("name", "yolo26s-obb-finetune")
         return project / name / "weights" / "best.pt"
 
     # -- 단계 ------------------------------------------------------------
@@ -225,7 +225,7 @@ class Trainer(Stage):
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="yolo26s-seg 파인튜닝 + ONNX export",
+        description="yolo26s-obb 파인튜닝 + ONNX export",
         epilog="configs/ 의 후보: " + Trainer.config_candidates(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

@@ -2,7 +2,7 @@
 #   python eval.py --config eval.stage1.yaml
 # 경로는 finetuner/ 기준.
 
-weights: runs/segment/stage1/weights/best.pt
+weights: runs/obb/stage1/weights/best.pt
 data: ../datasets/processed/stage1/data.yaml
 split: val
 imgsz: 640
