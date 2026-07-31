@@ -9,4 +9,10 @@
     targets: 키 → --only CLI 플래그로 대체. download.py 로직 무변경(roboflow 키 필터 그대로)
   - selftest.py 새 스키마로 갱신, ALL PASS. README/common/train 문구 갱신
   - train_config*.yaml 의 train.data 경로는 무변경 (스테이지 out 과 1:1 유지)
-  - 미커밋 상태
+  - 커밋: 135e1ae
+
+2026-08-01  train merge (pull)
+  - train(61ca4fd)을 이 브랜치로 merge — conflict 없이 auto-merge
+  - 들어온 것: download 인덱스 접두어(0000__, 39449af) + cached-tumbling-mountain changelog
+  - split_group 접두어 벗기기와 통합 config 구조가 함께 동작 확인 (selftest 105건 ALL PASS)
+  - train 으로의 역방향 merge/push 는 아직 안 함 (사용자 지시 대기)
