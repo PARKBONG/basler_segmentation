@@ -16,3 +16,8 @@
   - 들어온 것: download 인덱스 접두어(0000__, 39449af) + cached-tumbling-mountain changelog
   - split_group 접두어 벗기기와 통합 config 구조가 함께 동작 확인 (selftest 105건 ALL PASS)
   - selftest 확인 후 train 으로 fast-forward merge + origin/train push 완료 (사용자 지시)
+
+2026-08-01  train sync (pull → 검증 → push)
+  - train(f5cb3e8)을 pull — cached-tumbling-mountain 의 recorder 세션 폴더/6자리 인덱스
+    작업(89be71e) 포함, fast-forward 로 conflict 없음
+  - selftest 105건 ALL PASS 확인 후 origin/train 으로 push (사용자 지시)
