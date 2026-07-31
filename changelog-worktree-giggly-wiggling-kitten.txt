@@ -21,3 +21,9 @@
   - train(f5cb3e8)을 pull — cached-tumbling-mountain 의 recorder 세션 폴더/6자리 인덱스
     작업(89be71e) 포함, fast-forward 로 conflict 없음
   - selftest 105건 ALL PASS 확인 후 origin/train 으로 push (사용자 지시)
+
+2026-08-01  preprocess: 이미지 지우면 짝 라벨 자동 삭제
+  - raw 에서 이미지 파일만 지우면 다음 실행 때 고아 라벨(.txt)을 자동 삭제
+    (prune_orphan_labels, collect_source 의 split 폴더마다 호출)
+  - 이미지 0장인 폴더는 경로 실수로 보고 라벨 보호 (경고만)
+  - selftest 3건 추가 (ALL PASS), README 사용법 추가. train merge/push 안 함

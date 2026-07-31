@@ -24,6 +24,8 @@
   (width/height/center_x/center_y), auto_crop 으로 이미지마다 라벨에서 직접 잡습니다.
 - --only 에 이름을 적으면 그 소스만 다시 굽습니다 (생략하면 스테이지 전체). 산출물이
   소스별 폴더라서 나머지 소스의 기존 산출물은 유지되고, data.yaml 만 매번 다시 묶입니다.
+- 마음에 안 드는 이미지는 원천(raw)에서 이미지 파일만 지우면 됩니다 — 다음 실행에서
+  짝 라벨(.txt)이 자동 삭제됩니다 (이미지가 하나도 없는 폴더는 경로 실수로 보고 보호).
 
 증강은 여기서 하지 않습니다. Ultralytics 가 학습 중에 온라인 증강을 하므로
 train_config.yaml 의 증강 하이퍼파라미터로 조절하고, 결과 확인은
@@ -305,6 +307,29 @@ class Preprocessor(Stage):
                 break
         return Path(*parts)
 
+    def prune_orphan_labels(self, img_dir: Path, lbl_dir: Path, name: str) -> None:
+        """
+        이미지가 지워진 라벨(.txt)을 원천에서 함께 지운다 — 데이터셋 항목 삭제는
+        이미지 파일만 지우면 되도록 (짝 라벨은 다음 실행에서 여기서 정리).
+
+        이미지가 하나도 없는데 라벨만 있으면 경로 실수일 가능성이 높으므로,
+        지우지 않고 경고만 합니다 (라벨 폴더를 통째로 날리는 사고 방지).
+        """
+        if not lbl_dir.is_dir():
+            return
+        stems = {p.stem for p in img_dir.iterdir() if p.suffix.lower() in IMG_EXTS}
+        orphans = sorted(p for p in lbl_dir.glob("*.txt") if p.stem not in stems)
+        if not orphans:
+            return
+        if not stems:
+            self.log(f"{name}: 이미지는 0장인데 라벨만 {len(orphans)}개 있습니다 — "
+                     f"경로 실수 같아 지우지 않습니다 ({img_dir})")
+            return
+        for p in orphans:
+            p.unlink()
+        self.log(f"{name}: 이미지가 지워진 라벨 {len(orphans)}개 자동 삭제 "
+                 f"(예: {orphans[0].name})")
+
     def remap_lines(self, text: str, src_names: dict, class_map: dict) -> list:
         """라벨의 class id 를 최종 id 로 remap. class_map 에 없는 클래스 줄은 제거."""
         out = []
@@ -379,6 +404,7 @@ class Preprocessor(Stage):
             if img_dir is None:
                 continue
             lbl_dir = self.labels_dir_for(img_dir)
+            self.prune_orphan_labels(img_dir, lbl_dir, src["name"])
             for img in sorted(img_dir.iterdir()):
                 if img.suffix.lower() not in IMG_EXTS or img.name in seen:
                     continue
