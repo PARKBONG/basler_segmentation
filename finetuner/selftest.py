@@ -11,6 +11,7 @@
                                       + class_map 필터 + 통합 data.yaml + --only 필터
                                       + 증분 재굽기 + auto_crop 산출물 + val 없으면 오류
                                       + 이미지 지우면 짝 라벨 자동 삭제 (0장 폴더는 보호)
+                                      + 지정 클래스 없는 쌍 자동 삭제 (전멸 시 보호)
   6. config 규약 (preprocess/train) — stage/config 명시 강제(조용한 fallback 금지),
                                       저장소 yaml 린트, stages/데이터/가중치 누락·오타 시
                                       즉시 오류
@@ -446,6 +447,52 @@ def test_orphan_label_cleanup(root: Path) -> None:
           len(list((src / "labels").glob("*.txt"))) == n_lbl, f"{n_lbl}개 유지 기대")
 
 
+def test_no_class_cleanup(root: Path) -> None:
+    """지정 클래스가 없는 이미지+라벨 쌍은 raw 에서 자동 삭제되는지 (+ 전멸 보호)."""
+    out = root / "out_noclass"
+
+    def lines(i):   # 앞 3장은 junk 만 → 지정 클래스(wire) 없음
+        if i < 3:
+            return ["1 0.02 0.02 0.06 0.02 0.06 0.06 0.02 0.06"]
+        return ["0 0.40 0.40 0.60 0.40 0.60 0.60 0.40 0.60"]
+
+    src = make_source(root / "srcJ", "pub", 10, 800, {0: "cable", 1: "junk"}, lines)
+
+    def write_cfg(fname: str, class_map: dict) -> Path:
+        cfg = {
+            "names": {0: "wire"},
+            "sources": [{"name": "rf_a", "path": str(src), "class_map": class_map,
+                         "oversample": 1, "crop": {"enabled": False}}],
+            "stages": {"single": {"out": str(out), "use": {"rf_a": {"val_ratio": 0.2}}}},
+            "seed": 0,
+            "preview": {"enabled": False, "count": 4},
+        }
+        p = root / fname
+        with p.open("w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True)
+        return p
+
+    Preprocessor("single", write_cfg("cfg_noclass.yaml", {"cable": "wire"})).run()
+    gone = [f"img{i:03d}" for i in range(3)]
+    check("no_class: wire 없는 쌍은 raw 에서 삭제",
+          not any((src / f"images/train/{s}.png").exists()
+                  or (src / f"labels/train/{s}.txt").exists() for s in gone))
+    n_out = (len(list((out / "rf_a/images/train").glob("*.png")))
+             + len(list((out / "rf_a/images/val").glob("*.png"))))
+    check("no_class: 남은 7장만 산출", n_out == 7, f"{n_out}")
+
+    # class_map 이 아무것도 못 잡으면(오타) 전멸 보호 — 아무것도 지우지 않음
+    n_before = len(list((src / "images/train").glob("*.png")))
+    try:
+        Preprocessor("single", write_cfg("cfg_typo.yaml", {"cabel": "wire"})).run()
+    except SystemExit:
+        pass                                    # val 산출물 없음 오류는 여기선 무관
+    check("no_class: 전부 미해당이면 삭제 안 함 (class_map 오타 보호)",
+          len(list((src / "images/train").glob("*.png"))) == n_before
+          and len(list((src / "labels/train").glob("*.txt"))) == n_before,
+          f"{n_before}쌍 유지 기대")
+
+
 def test_split_group() -> None:
     """Roboflow 증강 사본이 원본 단위로 묶여 근중복 누수를 막는지."""
     check("split_group: rf 사본은 원본 stem 으로",
@@ -659,6 +706,7 @@ def main() -> int:
         test_pipeline_incremental(root)
         test_pipeline_three_way(root)
         test_orphan_label_cleanup(root)
+        test_no_class_cleanup(root)
         test_preprocess_stage_required()
         test_real_download_config()
         test_trainer_config_required(root)
