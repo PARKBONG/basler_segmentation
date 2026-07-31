@@ -7,6 +7,14 @@
     - config.xml <Model> -> yolo26s-obb.onnx (train export의 deploy_to와 짝)
     - Windows 빌드로 검증 필요
 5. 더있나??
+2. proprocessor <- 데이터셋별 정리. 
+    - instance seg model -> obb
+    - no label -> delete ok. 
+    - many label -> single
+3. kimm labeler
+4. obb csharp쪽
+5. 학습찍기
+
 
 --- 완료 ---
 1. downloader 단일로 합체                    (download.py + configs/download.yaml)
