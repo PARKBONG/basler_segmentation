@@ -6,7 +6,7 @@ yolo26s-seg 파인튜닝 파이프라인. 코드/설정만 여기 두고, 실제
 
 | 파일 | 클래스 | config | 역할 |
 |------|--------|--------|------|
-| `download.py` | `Downloader` | `pipeline.yaml` (후보 1개 → 자동) | 공개(Roboflow) 데이터셋 획득 — `roboflow:` 블록이 있는 소스만 |
+| `download.py` | `Downloader` | `download.yaml` (후보 1개 → 자동) | 공개(Roboflow) 데이터셋 획득 |
 | `preprocess.py` | `Preprocessor` | `preprocess.*.yaml` (**--config**) | 소스별 개별 처리(크롭·리사이즈·클래스 통일·train/val/test 분할·oversample) 후 하나로 병합 |
 | `train.py` | `Trainer` | `train.*.yaml` (**--config**) | 파인튜닝 · 증강 미리보기 · ONNX export |
 | `eval.py` | `Evaluator` | `eval.*.yaml` (**--config**) | 학습된 checkpoint 를 지정 split 에서 평가 |
@@ -19,10 +19,11 @@ python download.py    →  python preprocess.py --config <yaml>   →  python tr
 ```
 
 **모든 스크립트의 인자는 `--config` 하나입니다.** 후보가 하나뿐이면(download 의
-`pipeline.yaml`) 인자 없이 자동으로 읽고, 여럿이면 후보 목록과 함께 명시를 요구합니다.
-소스 정의(`sources:` — 어디 있고 어떻게 처리하는지)는 `configs/pipeline.yaml` 에 한 번만
-적고, 스테이지 config(`preprocess.*.yaml` — 어떤 소스를 어떤 비율로 어디에 굽는지)가
-`pipeline:` 키로 참조하므로, 다운로드와 전처리가 경로를 서로 맞출 필요가 없습니다.
+`download.yaml`) 인자 없이 자동으로 읽고, 여럿이면 후보 목록과 함께 명시를 요구합니다.
+다운로드(`download.yaml` — 어디서 받아 어디에 둘지)와 전처리(`preprocess.*.yaml` —
+소스 구성·크롭·비율, 스테이지마다 자급자족)는 서로를 참조하지 않습니다 — 공유하는 건
+원천 폴더 규약(`datasets/raw/<이름>/`) 하나뿐이고, selftest 가 두 쪽의 path 일치를
+검사합니다.
 
 각 단계는 import 해서 한 프로세스에서 이어 붙일 수도 있습니다:
 
@@ -112,12 +113,12 @@ train: images
 
 앱은 **크롭하지 않은 원본**을 저장합니다. 크롭은 폴리곤 라벨까지 함께 잘라야 하므로
 `preprocess.py` 가 담당하고, 앱에서 버린 픽셀은 되돌릴 수 없기 때문입니다. 앱 툴바
-슬라이더로 눈으로 찾은 위치(%)를 `configs/pipeline.yaml` 의 `crop.center_x/center_y` 에
+슬라이더로 눈으로 찾은 위치(%)를 `configs/preprocess.*.yaml` 해당 소스의 `crop.center_x/center_y` 에
 그대로 옮겨 적으면 됩니다 — 두 곳이 같은 0~100% 규약을 씁니다.
 
 ## 소스별 개별 처리
 
-`configs/pipeline.yaml` 의 `sources:` 항목 하나가 곧 데이터셋 하나이고, 인자를 각자 가집니다.
+`configs/preprocess.*.yaml` 의 `sources:` 항목 하나가 곧 데이터셋 하나이고, 인자를 각자 가집니다 (스테이지마다 다르게 적용 가능).
 소스가 **무엇인지**(위치·처리 인자)는 `sources:` 에 한 번만 적고, 스테이지가 **무엇을
 굽는지**(포함 소스·비율·산출 위치)는 `stages:` 가 정합니다:
 

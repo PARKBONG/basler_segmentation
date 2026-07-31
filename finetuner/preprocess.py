@@ -8,9 +8,9 @@
   (Ultralytics 는 각 split 에 폴더 목록을 지원). test 는 있을 때만 키를 넣습니다.
 
 설계 원칙:
-- 어떤 데이터셋을 굽는지는 configs/preprocess.<이름>.yaml 이 정합니다 — 소스 정의는
-  pipeline.yaml 의 sources 에 한 번만 적고, 스테이지 config 의 use 가 포함 소스와
-  val/test 비율을 정합니다. 후보가 여럿이라 --config 로 반드시 명시합니다.
+- 어떤 데이터셋을 굽는지는 configs/preprocess.<이름>.yaml 이 정합니다 — 스테이지
+  config 하나가 소스 구성·크롭·비율 등 전처리 전부를 소유합니다 (다른 yaml 참조 없음,
+  전처리는 소스별·스테이지별로 다르게 적용). 후보가 여럿이라 --config 로 반드시 명시합니다.
 - 분할(train/val/test)은 소스 내부에서, oversample 전에 그룹(원본) 단위로 나눕니다.
   Roboflow 증강 사본(..._jpg.rf.<hash>)은 원본 단위로 묶여 같은 split 에만 들어갑니다
   (근중복이 train/val 에 갈라 들어가는 누수 방지).
@@ -54,7 +54,7 @@ from pathlib import Path
 
 import yaml
 
-from common import CONFIG_DIR, IMG_EXTS, Stage, load_yaml, normalize_names, resolve
+from common import IMG_EXTS, Stage, normalize_names, resolve
 
 
 # ── 크롭 기하 (순수 함수 — selftest.py 가 직접 검증) ─────────────────────────
@@ -214,10 +214,10 @@ class Preprocessor(Stage):
     """
     소스들을 소스별 산출물 + 통합 data.yaml 의 학습용 데이터셋으로 만드는 단계.
 
-    config 는 스테이지당 하나(configs/preprocess.<이름>.yaml)이며 out/use/only 를
-    가집니다. 소스 정의(names/sources/seed/preview)는 config 의 `pipeline:` 키가
-    가리키는 공유 yaml 에서 오고, 같은 키를 스테이지 config 에 직접 적으면 그쪽이
-    이깁니다 (합성 테스트처럼 한 파일에 다 적는 것도 가능).
+    config 는 스테이지당 하나(configs/preprocess.<이름>.yaml)이고 그 스테이지의
+    전처리 전부(names/seed/preview/out/sources/only)를 자급자족으로 소유합니다 —
+    다른 yaml 을 참조하지 않으며, download 쪽과는 datasets/raw/<이름>/ 경로 규약만
+    공유합니다. 전처리는 데이터셋(소스)별·스테이지별로 다르게 적용됩니다.
     """
 
     config_glob = "preprocess.*.yaml"
@@ -226,23 +226,15 @@ class Preprocessor(Stage):
     def __init__(self, config_path=None) -> None:
         super().__init__(config_path)
 
-        pipeline_ref = self.cfg.get("pipeline")
-        if pipeline_ref:
-            base_path = self.resolve(pipeline_ref)
-            if not base_path.exists():
-                base_path = CONFIG_DIR / str(pipeline_ref)
-            base = load_yaml(base_path)          # 없으면 FileNotFoundError 로 경로를 보여줌
-            self.cfg = {**base, **self.cfg}      # 스테이지 config 가 필드 단위로 우선
-
-        if not self.cfg.get("out"):
-            raise SystemExit(
-                f"[{self.label}] {self.config_path.name}: out 이 없습니다 — 산출물을 "
-                f"어디에 구울지 기본값으로 정하지 않습니다."
-            )
+        for key in ("out", "sources"):
+            if not self.cfg.get(key):
+                raise SystemExit(
+                    f"[{self.label}] {self.config_path.name}: {key} 가 없습니다 — "
+                    f"기본값으로 정하지 않습니다."
+                )
         # 로그용 스테이지 이름은 파일명에서 (preprocess.stage1.yaml → stage1)
         stem = self.config_path.stem
         self.stage_name = stem.split(".", 1)[1] if "." in stem else stem
-        self.stage_cfg = {"out": self.cfg["out"], "use": self.cfg.get("use") or {}}
         self.only = list(self.cfg.get("only") or [])
         self.final_names = normalize_names(self.cfg.get("names"))
         self.final_ids = {v: k for k, v in self.final_names.items()}  # name → id
@@ -256,17 +248,8 @@ class Preprocessor(Stage):
     # -- 소스 선택 -------------------------------------------------------
 
     def stage_sources(self) -> list:
-        """이 스테이지(use)의 소스들 — use 값이 sources 정의를 얕게(필드 단위) 덮어씀."""
-        by_name = {s["name"]: s for s in self.cfg.get("sources") or []}
-        use = self.stage_cfg.get("use") or {}
-        unknown = [n for n in use if n not in by_name]
-        if unknown:
-            raise SystemExit(
-                f"[{self.label}] stage '{self.stage_name}' 의 use 에 없는 소스 이름: "
-                f"{', '.join(unknown)}\n"
-                f"  sources 에 있는 이름: {', '.join(by_name) or '(없음)'}"
-            )
-        return [{**by_name[n], **(use[n] or {})} for n in use]   # yaml 순서 유지
+        """이 스테이지의 소스들 — config 의 sources 그대로 (yaml 순서 유지)."""
+        return list(self.cfg.get("sources") or [])
 
     def selected_sources(self) -> list:
         """config 의 only 로 좁힌 소스만 (없으면 스테이지 전체). 이름이 틀리면 바로 알려줍니다."""
@@ -586,7 +569,7 @@ class Preprocessor(Stage):
         stale = sorted(d.name for d in self.out.iterdir()
                        if d.is_dir() and d.name != "_preview" and d.name not in all_names)
         if stale:
-            self.log(f"경고: 이 스테이지의 use 에 없는 산출물 폴더는 data.yaml 에서 "
+            self.log(f"경고: 이 스테이지의 sources 에 없는 산출물 폴더는 data.yaml 에서 "
                      f"제외했습니다: {', '.join(stale)} (안 쓰면 지우세요)")
 
         data_yaml = {

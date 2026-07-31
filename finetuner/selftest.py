@@ -221,23 +221,19 @@ def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False,
     make_source(root, "kimm", 10, 800, {0: "wire"}, local_lines, flat=True)
     make_source(root, "pub", 6, 800, {0: "cable", 1: "junk"}, public_lines)
 
-    # kimm 의 val_ratio 는 sources 에서 0.0 으로 두고 stage use 가 0.2 로 덮어쓴다
-    # → use 의 얕은 병합(필드 단위 덮어쓰기)이 실제로 동작하는지도 함께 검증
-    # 실제 규약(pipeline: 참조) 대신 한 파일에 전부 적는다 — 스테이지 config 의
-    # 키가 공유 정의를 덮어쓰는 병합 규칙 덕에 이 형태도 그대로 동작해야 한다.
+    # 실제 규약처럼 스테이지 config 하나가 소스별 전처리 전부를 소유한다.
     cfg = {
         "names": {0: "wire"},
         "sources": [
             {"name": "kimm", "path": str(root / "kimm"),
-             "class_map": {"wire": "wire"}, "val_ratio": 0.0,
+             "class_map": {"wire": "wire"},
+             "val_ratio": 0.2, "test_ratio": test_ratio,
              "oversample": 2, "crop": crop},
             {"name": "rf_a", "path": str(root / "pub"),
-             "class_map": {"cable": "wire"}, "oversample": 1,
-             "crop": crop},
+             "class_map": {"cable": "wire"}, "val_ratio": 0.0,
+             "oversample": 1, "crop": crop},
         ],
         "out": str(out),
-        "use": {"kimm": {"val_ratio": 0.2, "test_ratio": test_ratio},
-                "rf_a": {"val_ratio": 0.0}},
         "seed": 0,
         "preview": {"enabled": preview, "count": 4},
     }
@@ -420,10 +416,9 @@ def test_orphan_label_cleanup(root: Path) -> None:
     cfg = {
         "names": {0: "wire"},
         "sources": [{"name": "kimm", "path": str(src),
-                     "class_map": {"wire": "wire"}, "oversample": 1,
-                     "crop": {"enabled": False}}],
+                     "class_map": {"wire": "wire"}, "val_ratio": 0.2,
+                     "oversample": 1, "crop": {"enabled": False}}],
         "out": str(out),
-        "use": {"kimm": {"val_ratio": 0.2}},
         "seed": 0,
         "preview": {"enabled": False, "count": 4},
     }
@@ -464,9 +459,9 @@ def test_no_class_cleanup(root: Path) -> None:
         cfg = {
             "names": {0: "wire"},
             "sources": [{"name": "rf_a", "path": str(src), "class_map": class_map,
-                         "oversample": 1, "crop": {"enabled": False}}],
+                         "val_ratio": 0.2, "oversample": 1,
+                         "crop": {"enabled": False}}],
             "out": str(out),
-            "use": {"rf_a": {"val_ratio": 0.2}},
             "seed": 0,
             "preview": {"enabled": False, "count": 4},
         }
@@ -641,7 +636,7 @@ def test_preprocess_config_required() -> None:
 
 
 def test_real_pipeline_config() -> None:
-    """저장소의 configs/preprocess.*.yaml + pipeline.yaml 이 규약을 지키는지 (config 린트)."""
+    """저장소의 configs/preprocess.*.yaml + download.yaml 이 규약을 지키는지 (config 린트)."""
     names = sorted(p.name for p in Preprocessor.candidate_paths())
     required = {"preprocess.single.yaml", "preprocess.stage1.yaml", "preprocess.stage2.yaml"}
     check("configs: preprocess 단일/stage1/stage2 존재", required <= set(names),
@@ -650,8 +645,8 @@ def test_real_pipeline_config() -> None:
     outs = {}
     for name in names:
         st = Preprocessor(name)
-        srcs = st.stage_sources()   # use 의 이름 오타면 여기서 SystemExit
-        check(f"{name}: names/use/out",
+        srcs = st.stage_sources()
+        check(f"{name}: names/sources/out",
               bool(st.cfg.get("names")) and bool(srcs) and bool(st.cfg.get("out")))
         # val 이 없으면 run() 이 SystemExit 로 막으므로, config 부터 걸러낸다
         check(f"{name}: val_ratio > 0 소스 존재",
@@ -662,12 +657,21 @@ def test_real_pipeline_config() -> None:
 
     # download.py 쪽 규약 — 내려받을 소스는 workspace/project 가 있어야 함
     all_sources = yaml.safe_load(
-        (CONFIG_DIR / "pipeline.yaml").read_text(encoding="utf-8")).get("sources") or []
+        (CONFIG_DIR / "download.yaml").read_text(encoding="utf-8")).get("sources") or []
     rf = [s for s in all_sources if s.get("roboflow")]
-    check("pipeline.yaml: roboflow 소스 존재 + workspace/project",
+    check("download.yaml: roboflow 소스 존재 + workspace/project",
           bool(rf) and all(s["roboflow"].get("workspace") and s["roboflow"].get("project")
                            for s in rf),
           ", ".join(s["name"] for s in rf) or "(없음)")
+    # 다운로드 소스의 path 는 어떤 preprocess config 와도 어긋나면 안 됨 —
+    # 두 쪽이 공유하는 유일한 계약이 datasets/raw/<이름>/ 경로이기 때문.
+    pre_paths = {}
+    for name in names:
+        for src in yaml.safe_load((CONFIG_DIR / name).read_text(encoding="utf-8")).get("sources") or []:
+            pre_paths.setdefault(src["name"], set()).add(str(src.get("path")))
+    mismatch = [s["name"] for s in all_sources
+                if s["name"] in pre_paths and str(s.get("path")) not in pre_paths[s["name"]]]
+    check("download.yaml: path 가 preprocess 쪽과 일치", not mismatch, str(mismatch))
 
 
 def test_real_eval_configs() -> None:

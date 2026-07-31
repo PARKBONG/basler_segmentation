@@ -7,7 +7,7 @@
   · 후보가 여럿이면 --config 를 **반드시 명시**해야 합니다 — 기본값으로 조용히
     넘어가면 의도한 것과 다른 데이터/설정으로 학습해도 알 수 없기 때문입니다.
 
-    download.py                                  configs/pipeline.yaml 자동 (후보 1개)
+    download.py                                  configs/download.yaml 자동 (후보 1개)
     preprocess.py --config preprocess.stage1.yaml    데이터셋 굽기
     train.py --config train.stage1.yaml              학습 + ONNX export
     eval.py --config eval.stage2.yaml                체크포인트 평가
