@@ -516,11 +516,13 @@ class Preprocessor(Stage):
         묶어 근중복이 train/val 에 갈라 들어가는 누수를 막습니다. 그 외 파일은
         stem 자체가 그룹(= 이미지 단위 분할)입니다.
 
-        download.py 가 붙이는 0000__ 인덱스 접두어는 사본마다 달라 그룹을 깨므로
-        먼저 벗깁니다 (같은 규약: download.Downloader.INDEX_RE).
+        download.py 가 붙이는 000000__ 인덱스 접두어는 rf 사본마다 달라 그룹을
+        깨므로 rf 사본에서만 벗깁니다. 그 외 파일(예: 앱 캡처)은 접두어를 포함한
+        stem 전체가 그룹이어야 합니다 — 캡처 파일명은 인덱스를 빼면 세션
+        타임스탬프만 남아 세션 전체가 한 그룹으로 뭉쳐 버리기 때문입니다.
         """
-        stem = re.sub(r"^\d+__", "", stem)
-        return stem.split(".rf.")[0] if ".rf." in stem else stem
+        bare = re.sub(r"^\d+__", "", stem)
+        return bare.split(".rf.")[0] if ".rf." in bare else stem
 
     def run(self) -> None:
         sources = self.selected_sources()

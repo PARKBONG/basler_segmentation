@@ -65,7 +65,8 @@ class Downloader(Stage):
 
     def index_files(self, dest: Path) -> None:
         """
-        images/·labels/ 의 파일명 맨 앞에 0000__ 식 인덱스를 붙인다 (이미지·라벨 짝 유지).
+        images/·labels/ 의 파일명 맨 앞에 000000__ 식 6자리 인덱스를 붙인다
+        (이미지·라벨 짝 유지 — 앱 FrameRecorder 의 캡처 파일명과 같은 규약).
 
         이름순으로 매기므로 같은 내용이면 재실행해도 번호가 같습니다. 이미 인덱스가
         붙어 있으면 벗기고 다시 매겨 중복 접두어가 생기지 않습니다. preprocess 의
@@ -79,7 +80,7 @@ class Downloader(Stage):
             pairs.append((bare, img))
         for i, (bare, img) in enumerate(sorted(pairs)):
             lbl = lbl_out / (img.stem + ".txt")
-            stem = f"{i:04d}__{bare}"
+            stem = f"{i:06d}__{bare}"
             img.rename(img_out / (stem + img.suffix))
             if lbl.exists():
                 lbl.rename(lbl_out / (stem + ".txt"))

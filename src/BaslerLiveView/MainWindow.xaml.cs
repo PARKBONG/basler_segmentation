@@ -276,7 +276,7 @@ public partial class MainWindow : Window
             {
                 _recorder.Start();
                 var rate = _recorder.SaveFps > 0 ? $"{_recorder.SaveFps:0.##} fps" : "every frame";
-                StatusText.Text = $"REC ({rate}) → {_recorder.Directory}";
+                StatusText.Text = $"REC ({rate}) → {_recorder.SessionDirectory}";
             }
             catch (Exception ex)
             {
@@ -287,7 +287,7 @@ public partial class MainWindow : Window
         else
         {
             _recorder.Stop();
-            StatusText.Text = $"REC stopped — {_recorder.SavedCount + _recorder.PendingCount} frame(s) → {_recorder.Directory}";
+            StatusText.Text = $"REC stopped — {_recorder.SavedCount + _recorder.PendingCount} frame(s) → {_recorder.SessionDirectory}";
         }
     }
 
