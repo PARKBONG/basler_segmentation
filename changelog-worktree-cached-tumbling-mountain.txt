@@ -4,3 +4,4 @@
 2026-08-01  download: Roboflow train/valid/test 분할을 받은 직후 kimm처럼 images/+labels/ 한 덩어리로 합침 (merge_splits, data.yaml → train: images). 분할은 preprocess가 담당. [41cf914, train에 merge+push됨]
 2026-08-01  download: raw 파일명 앞에 0000__ 인덱스 접두어 부여 (index_files, 멱등). preprocess.split_group은 접두어 벗기고 그룹핑 → .rf. 증강 사본 누수 방지 유지. selftest 케이스 추가. [39449af, train에 merge됨, push 안 함]
 2026-08-01  기존 datasets/raw/rf_a 41장을 일회성으로 flat+인덱스 구조로 변환 (git 무관, datasets는 gitignore).
+2026-08-01  download 인덱스 4→6자리(000000__). FrameRecorder: REC 시작마다 datasets/raw/kimm_YYMMDD_HHMMSS/images/ 세션 폴더 생성, 파일명 {D6}__cap_<세션>.png. preprocess.split_group은 .rf. 사본에서만 접두어 벗김(캡처는 stem 전체가 그룹). config.xml Directory → datasets/raw. [89be71e + train(config 통합) merge]
