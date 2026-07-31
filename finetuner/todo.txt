@@ -1,10 +1,16 @@
 2. preprocessor <- 데이터셋별 정리.
-    - instance seg model -> obb
-    - no label -> delete
+    - no label -> delete (완료: prune_orphan_labels/prune_no_class_pairs)
     - many label -> single
+6. 앱(BaslerLiveView) 추론을 OBB로 전환 — 학습 결과 나온 뒤 진행.
+    - vendored YoloDotNet이 yolo26 ONNX 출력 레이아웃을 지원하는지 확인 (필요시 업데이트)
+    - SegmentationService(RunSegmentation+마스크 오버레이) -> OBB 서비스(RunObbDetection+회전 사각형 드로잉)
+    - config.xml <Model> -> yolo26s-obb.onnx (train export의 deploy_to와 짝)
+    - Windows 빌드로 검증 필요
 5. 더있나??
 
 --- 완료 ---
-1. downloader 단일로 합체                    (download.py + configs/pipeline.yaml)
-3. 코드 공간 정리 -> 표준적으로              (configs/ 분리, 스크립트 일관화)
-4. preprocess config 여러개 -> 통합          (pipeline.yaml 의 stages 로 일원화)
+1. downloader 단일로 합체                    (download.py + configs/download.yaml)
+3. 코드 공간 정리 -> 표준적으로              (configs/ 분리, --config 통일)
+4. preprocess config 여러개 -> 통합 후 재분리 (스테이지별 preprocess.*.yaml 자급자족)
+2-1. instance seg -> obb                     (preprocess task: obb — min-area rect 피팅,
+                                              train/eval도 yolo26s-obb로 전환)

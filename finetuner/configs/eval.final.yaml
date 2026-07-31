@@ -3,7 +3,7 @@
 # 이 결과를 보고 하이퍼파라미터를 다시 조정하면 그 순간 오염되어
 # 논문에 쓸 수 없습니다.
 
-weights: runs/segment/stage2/weights/best.pt
+weights: runs/obb/stage2/weights/best.pt
 data: ../datasets/processed/kimm/data.yaml
 split: test
 imgsz: 640
