@@ -33,7 +33,7 @@ from common import Stage, load_yaml, normalize_names, roboflow_api_key
 class Downloader(Stage):
     """configs/pipeline.yaml 의 공개 데이터셋을 내려받는 단계."""
 
-    config_name = "pipeline.yaml"   # configs/pipeline.yaml — preprocess.py 와 공유
+    config_glob = "pipeline.yaml"   # 후보가 이 하나뿐 → --config 없이 자동 선택
     label = "download"
 
     @staticmethod
@@ -164,16 +164,18 @@ class Downloader(Stage):
         rf = Roboflow(api_key=roboflow_api_key())
         done = sum(self.download_one(rf, s) for s in sources)
 
-        self.log(f"완료: {done}/{len(sources)} 소스. 다음: python preprocess.py --stage <이름>")
+        self.log(f"완료: {done}/{len(sources)} 소스. 다음: python preprocess.py --config <yaml>")
 
 
 def main() -> None:
-    # 인자는 없지만 --help 와 오타 거절을 위해 형제 스크립트처럼 argparse 를 둔다.
-    argparse.ArgumentParser(
-        description="Roboflow 공개 데이터셋 다운로드 (configs/pipeline.yaml 자동, "
-                    "환경변수 ROBOFLOW_API_KEY 필요)",
-    ).parse_args()
-    Downloader().run()
+    ap = argparse.ArgumentParser(
+        description="Roboflow 공개 데이터셋 다운로드 (환경변수 ROBOFLOW_API_KEY 필요)",
+        epilog="configs/ 의 후보: " + Downloader.config_candidates()
+               + " — 하나뿐이라 --config 생략 시 자동 선택",
+    )
+    ap.add_argument("--config", metavar="YAML",
+                    help="설정 yaml (생략 시 후보가 하나면 자동). configs/ 안 파일명 또는 경로")
+    Downloader(ap.parse_args().config).run()
 
 
 if __name__ == "__main__":

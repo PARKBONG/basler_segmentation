@@ -1,0 +1,9 @@
+# Stage1 평가 — 공개 val 기준 (in-domain 격리 유지).
+#   python eval.py --config eval.stage1.yaml
+# 경로는 finetuner/ 기준.
+
+weights: runs/segment/stage1/weights/best.pt
+data: ../datasets/stage1/data.yaml
+split: val
+imgsz: 640
+device: "0"

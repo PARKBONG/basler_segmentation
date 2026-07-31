@@ -18,9 +18,9 @@ config 의 stages 로 무엇을 돌릴지 고릅니다 (블록 자체가 필수 
 
 사용법(5090 머신):
     pip install -r requirements.txt
-    python train.py --config train_config.yaml            # 단일 스테이지
-    python train.py --config train_config.stage1.yaml     # 공개 warm-up
-    python train.py --config train_config.stage2.yaml     # in-domain 적응
+    python train.py --config train.single.yaml     # 단일 스테이지
+    python train.py --config train.stage1.yaml     # 공개 warm-up
+    python train.py --config train.stage2.yaml     # in-domain 적응
 """
 from __future__ import annotations
 
@@ -36,13 +36,11 @@ class Trainer(Stage):
     """
     파인튜닝과 ONNX export 를 담당하는 단계.
 
-    config 는 필수입니다 (`Trainer("train_config.stage1.yaml")`). 스테이지마다 다른
-    yaml 을 쓰므로 기본값을 두면 조용히 엉뚱한 설정으로 학습할 수 있습니다.
+    스테이지마다 다른 yaml 을 쓰므로(`Trainer("train.stage1.yaml")`) 후보가 여럿이면
+    기본값을 고르지 않습니다 — 조용히 엉뚱한 설정으로 학습하는 것을 막기 위함입니다.
     """
 
-    config_name = "train_config.yaml"        # 오류 메시지의 예시일 뿐, 자동 선택 안 함 (configs/)
-    config_glob = "train_config*.yaml"
-    explicit_config = True
+    config_glob = "train.*.yaml"
     label = "train"
 
     def __init__(self, config_path=None) -> None:
@@ -63,7 +61,7 @@ class Trainer(Stage):
         if not path.exists():
             raise FileNotFoundError(
                 f"데이터셋 정의가 없습니다: {path}\n"
-                f"먼저 python preprocess.py --stage <이름> 으로 "
+                f"먼저 python preprocess.py --config <yaml> 으로 "
                 f"데이터셋을 만드세요 (공개셋은 python download.py 선행)."
             )
         return path
@@ -171,7 +169,7 @@ class Trainer(Stage):
         if not weights.exists():
             raise FileNotFoundError(
                 f"가중치를 찾을 수 없습니다: {weights}\n"
-                f"학습을 먼저 끝내거나 train_config.yaml 의 train.project/name 을 확인하세요."
+                f"학습을 먼저 끝내거나 train.*.yaml 의 train.project/name 을 확인하세요."
             )
         self.log(f"가중치: {weights}")
 
@@ -246,8 +244,8 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument(
-        "--config", required=True, metavar="YAML",
-        help="학습 설정 yaml (필수 — 기본값 없음). configs/ 안 파일명 또는 경로",
+        "--config", metavar="YAML",
+        help="학습 설정 yaml (후보가 여럿이라 사실상 필수). configs/ 안 파일명 또는 경로",
     )
     Trainer(ap.parse_args().config).run()
 

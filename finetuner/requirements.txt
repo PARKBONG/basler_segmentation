@@ -9,7 +9,7 @@
 #
 # (위 한 줄로 torch를 먼저 깐 뒤 아래를 설치하면, ultralytics가 기존 torch를 유지합니다.)
 #
-# train_config*.yaml 은 batch: -1 (AutoBatch) 라서 GPU 메모리에 맞춰 자동 조정됩니다 —
+# train.*.yaml 은 batch: -1 (AutoBatch) 라서 GPU 메모리에 맞춰 자동 조정됩니다 —
 # B200/5090 어느 쪽에서도 config 수정 없이 그대로 돌아갑니다.
 
 --extra-index-url https://download.pytorch.org/whl/cu128

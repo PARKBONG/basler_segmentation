@@ -1,13 +1,7 @@
-# 데이터 파이프라인 통합 설정(configs/pipeline.yaml) — download.py 와 preprocess.py 가 함께 읽습니다.
-#   python download.py                    # roboflow: 블록이 있는 소스만 내려받음
-#   python preprocess.py --stage <이름>   # stages: 의 한 스테이지를 굽기 (--stage 필수)
+# 데이터 파이프라인 공유 정의 — "소스가 무엇인지"를 여기 한 번만 적습니다.
+#   download.py 가 자동으로 읽고(후보가 이 파일 하나), preprocess.*.yaml 이
+#   pipeline: 키로 참조합니다. "무엇을 어디에 굽는지"는 preprocess.*.yaml 소유.
 # 경로는 이 yaml(=finetuner/ 폴더) 기준 상대경로 또는 절대경로.
-#
-# 구조 — "소스가 무엇인지"와 "스테이지가 무엇을 굽는지"를 분리합니다:
-#   sources:  소스의 정의 — 어디 있고(path/roboflow) 어떻게 처리하는지(class_map·크롭…).
-#             (스테이지별로 나뉘어 있던 예전 설정을 여기 한 번만 적습니다.)
-#   stages:   스테이지별 구성 — 어떤 소스를(use) 어떤 비율로(val_ratio…) 어디에(out) 굽는지.
-#             use 의 값은 위 sources 정의를 필드 단위로 덮어씁니다.
 #
 # API 키는 여기 적지 말고 환경변수 ROBOFLOW_API_KEY 로 넘기세요.
 
@@ -88,33 +82,3 @@ sources:
       enabled: false             # 공개셋은 이미 잘려 있음. 켜려면 width/height/center_*
                                  # (또는 auto_crop) 를 이 블록에 직접 적으세요.
     resize: null
-
-# 스테이지 — python preprocess.py --stage <이름>. use 에 적힌 소스만 그 스테이지에 들어가고,
-# use 의 값(val_ratio 등)이 위 sources 의 같은 이름 소스 정의를 필드 단위로 덮어씁니다.
-#   val_ratio  이 소스에서 val 로 뗄 비율 (그룹 단위 분할 → 근중복 누수 없음)
-#   test_ratio 최종 1회 평가용 test 비율 (eval.py --split test)
-# out 은 스테이지마다 달라야 하며 train_config*.yaml 의 train.data 와 1:1 짝입니다.
-# 일부 소스만 다시 구우려면 --only <이름> 을 쓰세요 (다른 소스 산출물은 유지됩니다).
-stages:
-  # 단일 스테이지 → datasets/processed (train_config.yaml 이 읽음)
-  single:
-    out: ../datasets/processed
-    use:
-      kimm: {val_ratio: 0.2, test_ratio: 0.0}   # 검증은 in-domain 에서만
-      rf_a: {val_ratio: 0.0}                    # 공개셋은 train 전용 (검증 오염 방지)
-
-  # Stage 1 (공개 warm-up) → datasets/stage1 (train_config.stage1.yaml 이 읽음)
-  # 공개 데이터만 — in-domain 미포함 (격리 유지가 이 스테이지의 존재 이유).
-  # Roboflow 증강 사본(..._jpg.rf.<hash>)은 원본 단위로 묶어 나누므로 누수 없음.
-  stage1:
-    out: ../datasets/stage1
-    use:
-      rf_a: {val_ratio: 0.1}                    # stage1 선택 지표용 공개 val
-
-  # Stage 2 (in-domain 적응) → datasets/stage2 (train_config.stage2.yaml 이 읽음)
-  # train/val/test 전부 인도메인. test 는 최종 모델에 딱 한 번 (eval.py --split test).
-  # 이 수치를 보고 하이퍼파라미터를 다시 만지면 그 순간 오염됩니다.
-  stage2:
-    out: ../datasets/stage2
-    use:
-      kimm: {val_ratio: 0.2, test_ratio: 0.1}

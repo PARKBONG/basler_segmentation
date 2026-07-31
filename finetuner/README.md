@@ -6,48 +6,48 @@ yolo26s-seg 파인튜닝 파이프라인. 코드/설정만 여기 두고, 실제
 
 | 파일 | 클래스 | config | 역할 |
 |------|--------|--------|------|
-| `download.py` | `Downloader` | `configs/pipeline.yaml` (자동) | 공개(Roboflow) 데이터셋 획득 — `roboflow:` 블록이 있는 소스만 |
-| `preprocess.py` | `Preprocessor` | `configs/pipeline.yaml` (자동) + **`--stage` 필수** | 소스별 개별 처리(크롭·리사이즈·클래스 통일·train/val/test 분할·oversample) 후 하나로 병합 |
-| `train.py` | `Trainer` | **`--config` 필수** | 파인튜닝 · 증강 미리보기 · ONNX export |
-| `eval.py` | — | 명령행 인자 | 학습된 checkpoint 를 지정 split 에서 평가 |
+| `download.py` | `Downloader` | `pipeline.yaml` (후보 1개 → 자동) | 공개(Roboflow) 데이터셋 획득 — `roboflow:` 블록이 있는 소스만 |
+| `preprocess.py` | `Preprocessor` | `preprocess.*.yaml` (**--config**) | 소스별 개별 처리(크롭·리사이즈·클래스 통일·train/val/test 분할·oversample) 후 하나로 병합 |
+| `train.py` | `Trainer` | `train.*.yaml` (**--config**) | 파인튜닝 · 증강 미리보기 · ONNX export |
+| `eval.py` | `Evaluator` | `eval.*.yaml` (**--config**) | 학습된 checkpoint 를 지정 split 에서 평가 |
 | `common.py` | `Stage` | — | config 로드 · 경로 해석 · 로그 |
 | `selftest.py` | — | — | 크롭 기하 · 폴리곤 클리핑 · 라벨 변환 · 누수 · config 규약 검증 |
 
 ```
-python download.py    →  python preprocess.py --stage <이름>   →  python train.py --config <yaml>
-   datasets/raw/rf_*/     datasets/{processed,stage1,stage2}/      runs/segment/ + 앱 Models/
+python download.py    →  python preprocess.py --config <yaml>   →  python train.py --config <yaml>
+   datasets/raw/rf_*/     datasets/{processed,stage1,stage2}/       runs/segment/ + 앱 Models/
 ```
 
-데이터 쪽 설정은 `configs/pipeline.yaml` **하나**입니다 — 소스 정의(`sources:` — 어디 있고
-어떻게 처리하는지)와 스테이지 구성(`stages:` — 어떤 소스를 어떤 비율로 어디에 굽는지)을
-같은 파일이 소유하므로, 다운로드와 전처리가 경로를 서로 맞출 필요가 없습니다.
+**모든 스크립트의 인자는 `--config` 하나입니다.** 후보가 하나뿐이면(download 의
+`pipeline.yaml`) 인자 없이 자동으로 읽고, 여럿이면 후보 목록과 함께 명시를 요구합니다.
+소스 정의(`sources:` — 어디 있고 어떻게 처리하는지)는 `configs/pipeline.yaml` 에 한 번만
+적고, 스테이지 config(`preprocess.*.yaml` — 어떤 소스를 어떤 비율로 어디에 굽는지)가
+`pipeline:` 키로 참조하므로, 다운로드와 전처리가 경로를 서로 맞출 필요가 없습니다.
 
 각 단계는 import 해서 한 프로세스에서 이어 붙일 수도 있습니다:
 
 ```python
 from download import Downloader; from preprocess import Preprocessor; from train import Trainer
-Downloader().run(); Preprocessor("single").run(); Trainer("train_config.yaml").run()
+Downloader().run(); Preprocessor("preprocess.single.yaml").run(); Trainer("train.single.yaml").run()
 ```
 
-### 스테이지·config 는 명시해야 합니다 (preprocess · train)
+### config 는 명시해야 합니다 (후보가 여럿일 때)
 
-`download` 와 `preprocess` 는 `configs/pipeline.yaml` 을 자동으로 읽습니다. 다만
-**`preprocess.py` 는 스테이지 후보가 여럿(단일/stage1/stage2)이라 `--stage` 없이는
-실행되지 않고, `train.py` 는 같은 이유로 `--config` 없이는 실행되지 않습니다.**
-스테이지와 train yaml 은 1:1 로 짝을 이룹니다:
+**후보가 여럿인 스크립트는 `--config` 없이 실행되지 않습니다** — 기본값을 고르는 순간
+"무엇으로 학습했는지"를 잃기 때문입니다. 스테이지의 preprocess/train/eval yaml 은
+1:1:1 로 짝을 이룹니다:
 
 ```powershell
 # 단일 스테이지
-python preprocess.py --stage single
-python train.py      --config train_config.yaml
+python preprocess.py --config preprocess.single.yaml
+python train.py      --config train.single.yaml
 
 # 2단계 학습 (논문 프로토콜): stage1 = 공개 warm-up, stage2 = in-domain 적응
-python preprocess.py --stage stage1
-python train.py      --config train_config.stage1.yaml
-python preprocess.py --stage stage2
-python train.py      --config train_config.stage2.yaml
-python eval.py --weights runs/segment/stage2/weights/best.pt `
-               --data ../datasets/stage2/data.yaml --split test   # 최종 1회만
+python preprocess.py --config preprocess.stage1.yaml
+python train.py      --config train.stage1.yaml
+python preprocess.py --config preprocess.stage2.yaml
+python train.py      --config train.stage2.yaml
+python eval.py       --config eval.final.yaml     # in-domain test — 최종 1회만
 ```
 
 후보가 여러 개인데 기본값을 고르면, 의도와 다른 설정으로 100 epoch 을 돌려도 알아챌 방법이
@@ -82,17 +82,17 @@ datasets/
       labels/         라벨링 결과 (YOLO seg 폴리곤)
       data.yaml
     rf_*/             download.py 가 받은 공개셋 (내부는 Roboflow export 규약 그대로)
-  processed/          --stage single 산출물 (단일 스테이지, + _preview/)
+  processed/          preprocess.single.yaml 산출물 (단일 스테이지, + _preview/)
     data.yaml         소스 산출물 전체를 묶는 학습용 정의 = train.py 가 읽는 파일
     kimm/             images|labels/{train,val,test}   (test 는 test_ratio > 0 일 때만)
     rf_*/             images|labels/{train,val,test}
-  stage1/             --stage stage1 산출물 (공개 전용 — 공개 val 포함)
-  stage2/             --stage stage2 산출물 (in-domain — val + 최종 test)
+  stage1/             preprocess.stage1.yaml 산출물 (공개 전용 — 공개 val 포함)
+  stage2/             preprocess.stage2.yaml 산출물 (in-domain — val + 최종 test)
 ```
 
 2단계 학습에서는 데이터셋도 두 벌입니다 — `stage1/` 은 공개 데이터만(warm-up + 공개 val),
 `stage2/` 는 in-domain 만(train/val/test). in-domain `test` 는 최종 stage2 모델에
-**딱 한 번** 씁니다 (`eval.py --split test`). data.yaml 의 `test:` 키는 test 산출물이
+**딱 한 번** 씁니다 (`eval.final.yaml`). data.yaml 의 `test:` 키는 test 산출물이
 있을 때만 생깁니다.
 
 `kimm` 의 라벨링만 수동 단계입니다. `raw/kimm/data.yaml` 은 두 줄이면 됩니다:
@@ -124,7 +124,7 @@ train: images
 
 | 인자 (`stages.<이름>` 소유) | 뜻 |
 |------|-----|
-| `out` | 산출물 루트. 스테이지마다 달라야 하고 `train_config*.yaml` 의 `train.data` 와 1:1 짝 |
+| `out` | 산출물 루트(`preprocess.*.yaml` 소유). 스테이지마다 달라야 하고 `train.*.yaml` 의 `train.data` 와 1:1 짝 |
 | `use` | 이 스테이지에 넣을 소스 이름 → 덮어쓸 값. **여기 적힌 소스만 포함됩니다** |
 | `use.<소스>.val_ratio` | 이 소스에서 val 로 뗄 비율. 단일/stage2 에서 공개셋은 `0.0` (검증 오염 방지) |
 | `use.<소스>.test_ratio` | 최종 1회 평가용 test 비율. 보통 stage2 의 kimm 에만 `> 0` |
@@ -135,18 +135,19 @@ train: images
 크롭 인자에 **공유 기본값은 없습니다** — 소스마다 자기 `crop` 블록이 전부입니다.
 `kimm` 은 풀사이즈라 640 크롭을 켜고, 공개셋은 이미 잘려 있어 `enabled: false` 로 두는 식입니다.
 
-### 일부만 다시 굽기 (`--only`)
+### 일부만 다시 굽기 (`only:`)
 
-`--only` 에 적은 소스만 처리합니다. 생략하면 스테이지 전체입니다.
+스테이지 config 의 `only:` 에 적은 소스만 처리합니다. 생략하면 스테이지 전체입니다.
 
 ```powershell
-python preprocess.py --stage single --only rf_a
+# preprocess.single.yaml 에서:  only: [rf_a]
+python preprocess.py --config preprocess.single.yaml
 ```
 
-산출물이 소스별 폴더(`processed/<이름>/`)라서 **`--only` 에 적은 소스만 다시 굽고,
+산출물이 소스별 폴더(`processed/<이름>/`)라서 **`only` 에 적은 소스만 다시 굽고,
 다른 소스의 기존 산출물은 그대로 유지됩니다** (한 소스만 설정을 바꿔 다시 굽는 용도).
 `processed/data.yaml` 은 매 실행마다 디스크에 있는 소스 산출물 전체를 다시 묶습니다 —
-학습셋에서 소스를 빼려면 `processed/<이름>/` 폴더를 지우세요. `--only` 에 없는 이름을
+학습셋에서 소스를 빼려면 `processed/<이름>/` 폴더를 지우세요. `only` 에 없는 이름을
 적으면 바로 오류로 알려줍니다.
 
 ## 크롭
@@ -190,7 +191,7 @@ python preprocess.py --stage single --only rf_a
 ## 증강
 
 **offline 증강은 하지 않습니다.** Ultralytics 가 학습 중 매 epoch 새로 증강하므로
-`train_config.yaml` 의 `train:` 블록 안 하이퍼파라미터(`hsv_*`, `scale`, `fliplr`, `mosaic`,
+`train.*.yaml` 의 `train:` 블록 안 하이퍼파라미터(`hsv_*`, `scale`, `fliplr`, `mosaic`,
 `copy_paste` …)로 조절합니다. 디스크에 구워두면 다양성이 오히려 줄고 온라인 증강과 이중으로 겹칩니다.
 
 결과 확인 — 쓰는 config 의 `stages` 를 이렇게 두고 돌립니다:
@@ -220,15 +221,15 @@ stages: { preview_aug: false, train: false, export: true }
 
 학습 머신은 B200(sm_100) 또는 RTX 5090(sm_120) — 둘 다 Blackwell 세대라 **CUDA 12.8+ 빌드
 PyTorch(cu128 휠)가 필수**이고, 같은 휠이 두 GPU를 모두 지원하므로 설치 명령은 동일합니다.
-`train_config*.yaml` 의 `batch: -1`(AutoBatch)이 GPU 메모리에 맞춰 배치를 자동으로 잡아주므로
+`train.*.yaml` 의 `batch: -1`(AutoBatch)이 GPU 메모리에 맞춰 배치를 자동으로 잡아주므로
 머신이 바뀌어도 config 는 수정할 필요 없습니다.
 
 ```powershell
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
 python selftest.py       # 파이프라인 자체 검증 (GPU 불필요)
-python preprocess.py --stage single
-python train.py --config train_config.yaml
+python preprocess.py --config preprocess.single.yaml
+python train.py --config train.single.yaml
 ```
 
 torch 가 GPU 를 제대로 잡았는지 확인:

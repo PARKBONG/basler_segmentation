@@ -24,7 +24,7 @@
            1) 세그멘테이션 입력 — 모델이 학습 때와 같은 화각을 보도록. 결과 오버레이는
               풀 프레임의 네모 안쪽에 다시 얹어 그립니다.
            2) finetuner/preprocess.py — REC 로 저장한 풀사이즈 원본을 라벨과 함께 크롭.
-         학습 imgsz(finetuner/configs/train_config*.yaml)와 같은 크기로 두면 됩니다.
+         학습 imgsz(finetuner/configs/train.*.yaml)와 같은 크기로 두면 됩니다.
          여기서 슬라이더로 찾은 위치(%)를 finetuner/configs/pipeline.yaml 의
          해당 소스 crop.center_x/center_y 에 그대로 옮겨 적으면 됩니다(같은 0~100% 규약). -->
     <Enabled>true</Enabled>

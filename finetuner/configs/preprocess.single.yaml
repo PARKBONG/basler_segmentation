@@ -1,0 +1,17 @@
+# 단일 스테이지 — kimm+공개셋을 한 데이터셋으로 (baseline / 빠른 실험용).
+#   python preprocess.py --config preprocess.single.yaml
+# 소스 정의(names/sources/seed/preview)는 pipeline.yaml 에서 오고,
+# 이 파일은 "어떤 소스를(use) 어떤 비율로 어디에(out) 굽는지"만 정합니다.
+# use 의 값은 pipeline.yaml 의 같은 이름 소스 정의를 필드 단위로 덮어씁니다.
+#   val_ratio  이 소스에서 val 로 뗄 비율 (그룹 단위 분할 → 근중복 누수 없음)
+#   test_ratio 최종 1회 평가용 test 비율 (eval)
+# out 은 스테이지마다 달라야 하며 train.*.yaml 의 train.data 와 1:1 짝입니다.
+
+pipeline: pipeline.yaml      # 공유 정의 위치 (configs/ 기준)
+
+out: ../datasets/processed   # train.single.yaml 이 읽음
+use:
+  kimm: {val_ratio: 0.2, test_ratio: 0.0}   # 검증은 in-domain 에서만
+  rf_a: {val_ratio: 0.0}                    # 공개셋은 train 전용 (검증 오염 방지)
+
+# only: [kimm]   # 일부 소스만 다시 굽기 (다른 소스 산출물은 유지). 평소엔 주석.

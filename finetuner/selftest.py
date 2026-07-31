@@ -10,9 +10,9 @@
                                       + val/test 누수 없음 (그룹 단위 3-way 분할)
                                       + class_map 필터 + 통합 data.yaml + --only 필터
                                       + 증분 재굽기 + auto_crop 산출물 + val 없으면 오류
-  6. config 규약 (preprocess/train) — stage/config 명시 강제(조용한 fallback 금지),
-                                      저장소 yaml 린트, stages/데이터/가중치 누락·오타 시
-                                      즉시 오류
+  6. config 규약 (모든 단계)        — 후보 여럿이면 --config 명시 강제(조용한
+                                      fallback 금지, 후보 1개면 자동), 저장소 yaml 린트,
+                                      데이터/가중치 누락·오타 시 즉시 오류
 
 필요: pyyaml, pillow  (ultralytics/torch 는 필요 없음)
 
@@ -32,7 +32,8 @@ from PIL import Image
 from common import CONFIG_DIR, HERE
 from preprocess import (Preprocessor, auto_crop_rect, clip_polygon, crop_rect, label_bbox,
                         polygon_area, transform_label)
-from train import Trainer   # ultralytics 는 메서드 안에서 import 하므로 여기선 불필요
+from eval import Evaluator  # ultralytics 는 run() 안에서 import 하므로 여기선 불필요
+from train import Trainer
 
 FAILURES: list = []
 
@@ -220,6 +221,8 @@ def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False,
 
     # kimm 의 val_ratio 는 sources 에서 0.0 으로 두고 stage use 가 0.2 로 덮어쓴다
     # → use 의 얕은 병합(필드 단위 덮어쓰기)이 실제로 동작하는지도 함께 검증
+    # 실제 규약(pipeline: 참조) 대신 한 파일에 전부 적는다 — 스테이지 config 의
+    # 키가 공유 정의를 덮어쓰는 병합 규칙 덕에 이 형태도 그대로 동작해야 한다.
     cfg = {
         "names": {0: "wire"},
         "sources": [
@@ -230,21 +233,19 @@ def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False,
              "class_map": {"cable": "wire"}, "oversample": 1,
              "crop": crop},
         ],
-        "stages": {
-            "single": {
-                "out": str(out),
-                "use": {"kimm": {"val_ratio": 0.2, "test_ratio": test_ratio},
-                        "rf_a": {"val_ratio": 0.0}},
-            },
-        },
+        "out": str(out),
+        "use": {"kimm": {"val_ratio": 0.2, "test_ratio": test_ratio},
+                "rf_a": {"val_ratio": 0.0}},
         "seed": 0,
         "preview": {"enabled": preview, "count": 4},
     }
-    cfg_path = root / "cfg.yaml"
+    if only:
+        cfg["only"] = list(only)
+    cfg_path = root / "preprocess.synthetic.yaml"
     with cfg_path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, allow_unicode=True)
 
-    stage = Preprocessor("single", cfg_path, only=only)
+    stage = Preprocessor(cfg_path)
     stage.run()
     return stage
 
@@ -460,14 +461,14 @@ def test_trainer_config_required(root: Path) -> None:
 
     # 이름을 잘못 적어도 traceback 이 아니라 후보 안내
     expect_raises("trainer: 없는 config 는 SystemExit + 후보 안내", SystemExit,
-                  lambda: Trainer("train_config.stage3.yaml"), "후보")
-    check("trainer: config 후보 목록", "train_config.stage1.yaml" in Trainer.config_candidates(),
+                  lambda: Trainer("train.stage3.yaml"), "후보")
+    check("trainer: config 후보 목록", "train.stage1.yaml" in Trainer.config_candidates(),
           Trainer.config_candidates())
 
     # 상대경로는 finetuner/ 기준으로 해석되고, 넘긴 파일이 그대로 쓰여야 함
-    t = Trainer("train_config.stage1.yaml")
+    t = Trainer("train.stage1.yaml")
     check("trainer: 넘긴 config 를 그대로 읽음",
-          t.config_path == CONFIG_DIR / "train_config.stage1.yaml", str(t.config_path))
+          t.config_path == CONFIG_DIR / "train.stage1.yaml", str(t.config_path))
     check("trainer: stage1 config 내용 확인",
           t.cfg["train"]["name"] == "stage1", str(t.cfg["train"].get("name")))
 
@@ -538,41 +539,39 @@ def test_trainer_data_and_weights(root: Path) -> None:
     check("model: 있는 checkpoint 는 절대경로로", Trainer(p).start_weights() == str(ckpt))
 
 
-def test_preprocess_stage_required() -> None:
-    """preprocess 는 stage 후보가 여럿(단일/stage1/stage2) → 생략·오타는 오류."""
-    expect_raises("preprocess: stage 생략은 SystemExit", SystemExit, Preprocessor, "명시")
-    expect_raises("preprocess: 없는 stage 는 SystemExit + 후보", SystemExit,
-                  lambda: Preprocessor("stage9"), "stage1")
-    check("preprocess: stage 후보 목록",
-          "stage1" in Preprocessor.stage_candidates(), Preprocessor.stage_candidates())
+def test_preprocess_config_required() -> None:
+    """preprocess 는 config 후보가 여럿(단일/stage1/stage2) → 생략·오타는 오류."""
+    expect_raises("preprocess: config 생략은 SystemExit", SystemExit, Preprocessor, "명시")
+    expect_raises("preprocess: 없는 config 는 SystemExit + 후보", SystemExit,
+                  lambda: Preprocessor("preprocess.stage9.yaml"), "후보")
+    check("preprocess: config 후보 목록",
+          "preprocess.stage1.yaml" in Preprocessor.config_candidates(),
+          Preprocessor.config_candidates())
 
 
 def test_real_pipeline_config() -> None:
-    """저장소의 configs/pipeline.yaml 이 규약을 지키는지 (통합 config 린트)."""
-    stage_names = list((yaml.safe_load(
-        Preprocessor.default_config_path().read_text(encoding="utf-8")) or {}
-    ).get("stages") or {})
-    required = {"single", "stage1", "stage2"}
-    check("pipeline.yaml: 단일/stage1/stage2 존재", required <= set(stage_names),
-          ", ".join(stage_names))
+    """저장소의 configs/preprocess.*.yaml + pipeline.yaml 이 규약을 지키는지 (config 린트)."""
+    names = sorted(p.name for p in Preprocessor.candidate_paths())
+    required = {"preprocess.single.yaml", "preprocess.stage1.yaml", "preprocess.stage2.yaml"}
+    check("configs: preprocess 단일/stage1/stage2 존재", required <= set(names),
+          ", ".join(names))
 
     outs = {}
-    for name in stage_names:
+    for name in names:
         st = Preprocessor(name)
         srcs = st.stage_sources()   # use 의 이름 오타면 여기서 SystemExit
-        check(f"stage {name}: names/use/out",
-              bool(st.cfg.get("names")) and bool(srcs) and bool(st.stage_cfg.get("out")))
+        check(f"{name}: names/use/out",
+              bool(st.cfg.get("names")) and bool(srcs) and bool(st.cfg.get("out")))
         # val 이 없으면 run() 이 SystemExit 로 막으므로, config 부터 걸러낸다
-        check(f"stage {name}: val_ratio > 0 소스 존재",
+        check(f"{name}: val_ratio > 0 소스 존재",
               any(float(s.get("val_ratio", 0)) > 0 for s in srcs))
-        outs[name] = str(st.stage_cfg.get("out"))
-    check("pipeline.yaml: 단일/stage1/stage2 out 이 전부 다름",
-          len({outs[n] for n in required if n in outs}) == len(required & set(stage_names)),
-          str(outs))
+        outs[name] = str(st.cfg.get("out"))
+    check("preprocess.*.yaml: out 이 전부 다름",
+          len(set(outs.values())) == len(outs), str(outs))
 
     # download.py 쪽 규약 — 내려받을 소스는 workspace/project 가 있어야 함
     all_sources = yaml.safe_load(
-        Preprocessor.default_config_path().read_text(encoding="utf-8")).get("sources") or []
+        (CONFIG_DIR / "pipeline.yaml").read_text(encoding="utf-8")).get("sources") or []
     rf = [s for s in all_sources if s.get("roboflow")]
     check("pipeline.yaml: roboflow 소스 존재 + workspace/project",
           bool(rf) and all(s["roboflow"].get("workspace") and s["roboflow"].get("project")
@@ -580,10 +579,21 @@ def test_real_pipeline_config() -> None:
           ", ".join(s["name"] for s in rf) or "(없음)")
 
 
+def test_real_eval_configs() -> None:
+    """저장소의 configs/eval.*.yaml 이 규약을 지키는지 (config 린트)."""
+    names = sorted(p.name for p in Evaluator.candidate_paths())
+    check("configs: eval.*.yaml 이 존재", bool(names), ", ".join(names))
+    for name in names:
+        cfg = yaml.safe_load((CONFIG_DIR / name).read_text(encoding="utf-8")) or {}
+        check(f"{name}: weights/data/split",
+              bool(cfg.get("weights")) and bool(cfg.get("data"))
+              and cfg.get("split") in ("train", "val", "test"))
+
+
 def test_real_train_configs() -> None:
-    """저장소에 있는 train_config*.yaml 이 모두 규약을 지키는지 (config 린트)."""
-    names = sorted(p.name for p in CONFIG_DIR.glob(Trainer.config_glob))
-    check("configs: train_config*.yaml 이 존재", bool(names), ", ".join(names))
+    """저장소에 있는 train.*.yaml 이 모두 규약을 지키는지 (config 린트)."""
+    names = sorted(p.name for p in Trainer.candidate_paths())
+    check("configs: train.*.yaml 이 존재", bool(names), ", ".join(names))
 
     for name in names:
         t = Trainer(name)
@@ -616,8 +626,9 @@ def main() -> int:
         test_pipeline_only(root)
         test_pipeline_incremental(root)
         test_pipeline_three_way(root)
-        test_preprocess_stage_required()
+        test_preprocess_config_required()
         test_real_pipeline_config()
+        test_real_eval_configs()
         test_trainer_config_required(root)
         test_trainer_stages_guard(root)
         test_trainer_data_and_weights(root)

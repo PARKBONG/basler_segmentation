@@ -8,9 +8,9 @@
   (Ultralytics 는 각 split 에 폴더 목록을 지원). test 는 있을 때만 키를 넣습니다.
 
 설계 원칙:
-- 어떤 데이터셋을 굽는지는 configs/pipeline.yaml 의 stages 가 정합니다 — 소스 정의는
-  sources 에 한 번만 적고, 스테이지별 use 가 포함 소스와 val/test 비율을 정합니다.
-  후보(단일/stage1/stage2)가 여럿이라 --stage 로 반드시 명시합니다.
+- 어떤 데이터셋을 굽는지는 configs/preprocess.<이름>.yaml 이 정합니다 — 소스 정의는
+  pipeline.yaml 의 sources 에 한 번만 적고, 스테이지 config 의 use 가 포함 소스와
+  val/test 비율을 정합니다. 후보가 여럿이라 --config 로 반드시 명시합니다.
 - 분할(train/val/test)은 소스 내부에서, oversample 전에 그룹(원본) 단위로 나눕니다.
   Roboflow 증강 사본(..._jpg.rf.<hash>)은 원본 단위로 묶여 같은 split 에만 들어갑니다
   (근중복이 train/val 에 갈라 들어가는 누수 방지).
@@ -22,11 +22,11 @@
   그 이미지는 데이터셋에서 제외됩니다(기존 동작과 동일: 대상 없는 이미지는 안 넣음).
 - 크롭 인자는 소스마다 독립입니다(공유 기본값 없음). 창을 %로 고정하거나
   (width/height/center_x/center_y), auto_crop 으로 이미지마다 라벨에서 직접 잡습니다.
-- --only 에 이름을 적으면 그 소스만 다시 굽습니다 (생략하면 스테이지 전체). 산출물이
+- config 의 only: 에 이름을 적으면 그 소스만 다시 굽습니다 (생략하면 스테이지 전체). 산출물이
   소스별 폴더라서 나머지 소스의 기존 산출물은 유지되고, data.yaml 만 매번 다시 묶입니다.
 
 증강은 여기서 하지 않습니다. Ultralytics 가 학습 중에 온라인 증강을 하므로
-train_config.yaml 의 증강 하이퍼파라미터로 조절하고, 결과 확인은
+train.*.yaml 의 증강 하이퍼파라미터로 조절하고, 결과 확인은
 `python train.py` 의 preview_aug 단계를 쓰세요 (offline 증강은 다양성이 오히려 줄고
 온라인 증강과 이중으로 겹칩니다).
 
@@ -35,9 +35,9 @@ train_config.yaml 의 증강 하이퍼파라미터로 조절하고, 결과 확�
   · 로컬(kimm)은 최소 형식으로 하나 작성:  names: {0: wire}\n train: images
 
 사용법:
-    python preprocess.py --stage single    # 단일 스테이지
-    python preprocess.py --stage stage1    # stage1 (공개 전용)
-    python preprocess.py --stage stage2    # stage2 (in-domain)
+    python preprocess.py --config preprocess.single.yaml    # 단일 스테이지
+    python preprocess.py --config preprocess.stage1.yaml    # stage1 (공개 전용)
+    python preprocess.py --config preprocess.stage2.yaml    # stage2 (in-domain)
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ from pathlib import Path
 
 import yaml
 
-from common import IMG_EXTS, Stage, load_yaml, normalize_names, resolve
+from common import CONFIG_DIR, IMG_EXTS, Stage, load_yaml, normalize_names, resolve
 
 
 # ── 크롭 기하 (순수 함수 — selftest.py 가 직접 검증) ─────────────────────────
@@ -206,47 +206,47 @@ def transform_label(line: str, src_w: int, src_h: int,
 # ── 전처리 단계 ─────────────────────────────────────────────────────────────
 
 class Preprocessor(Stage):
-    """소스들을 소스별 산출물 + 통합 data.yaml 의 학습용 데이터셋으로 만드는 단계."""
+    """
+    소스들을 소스별 산출물 + 통합 data.yaml 의 학습용 데이터셋으로 만드는 단계.
 
-    config_name = "pipeline.yaml"   # configs/pipeline.yaml — download.py 와 같은 파일
+    config 는 스테이지당 하나(configs/preprocess.<이름>.yaml)이며 out/use/only 를
+    가집니다. 소스 정의(names/sources/seed/preview)는 config 의 `pipeline:` 키가
+    가리키는 공유 yaml 에서 오고, 같은 키를 스테이지 config 에 직접 적으면 그쪽이
+    이깁니다 (합성 테스트처럼 한 파일에 다 적는 것도 가능).
+    """
+
+    config_glob = "preprocess.*.yaml"
     label = "preprocess"
 
-    def __init__(self, stage=None, config_path=None, only=None) -> None:
+    def __init__(self, config_path=None) -> None:
         super().__init__(config_path)
-        stages = self.cfg.get("stages")
-        if not isinstance(stages, dict) or not stages:
+
+        pipeline_ref = self.cfg.get("pipeline")
+        if pipeline_ref:
+            base_path = self.resolve(pipeline_ref)
+            if not base_path.exists():
+                base_path = CONFIG_DIR / str(pipeline_ref)
+            base = load_yaml(base_path)          # 없으면 FileNotFoundError 로 경로를 보여줌
+            self.cfg = {**base, **self.cfg}      # 스테이지 config 가 필드 단위로 우선
+
+        if not self.cfg.get("out"):
             raise SystemExit(
-                f"[{self.label}] {self.config_path.name} 에 stages 블록이 없습니다."
+                f"[{self.label}] {self.config_path.name}: out 이 없습니다 — 산출물을 "
+                f"어디에 구울지 기본값으로 정하지 않습니다."
             )
-        if stage is None or stage not in stages:
-            # config 후보가 여럿이던 때와 같은 원칙 — 기본 스테이지를 조용히 고르지 않음
-            raise SystemExit(
-                f"[{self.label}] 구울 스테이지를 명시하세요 — 기본값으로 조용히 넘어가지 "
-                f"않습니다.\n"
-                f"  python {self.label}.py --stage <이름>\n"
-                f"  {self.config_path.name} 의 stages 후보: {', '.join(stages)}"
-                + (f"\n  없는 스테이지: {stage}" if stage is not None else "")
-            )
-        self.stage_name = stage
-        self.stage_cfg = stages[stage] or {}
-        self.only = list(only or [])
+        # 로그용 스테이지 이름은 파일명에서 (preprocess.stage1.yaml → stage1)
+        stem = self.config_path.stem
+        self.stage_name = stem.split(".", 1)[1] if "." in stem else stem
+        self.stage_cfg = {"out": self.cfg["out"], "use": self.cfg.get("use") or {}}
+        self.only = list(self.cfg.get("only") or [])
         self.final_names = normalize_names(self.cfg.get("names"))
         self.final_ids = {v: k for k, v in self.final_names.items()}  # name → id
-        self.out = self.resolve(self.stage_cfg["out"])
+        self.out = self.resolve(self.cfg["out"])
         self._dropped_empty = 0       # 크롭 후 인스턴스가 모두 사라져 제외된 이미지 수
         self._dropped_instances = 0   # 크롭 창 밖으로 나가 폐기된 인스턴스 수
         self._undersized = 0          # auto_crop 창이 min_size 에 못 미친 이미지 수
         self._undersized_min = 0      # 그 중 가장 작았던 변 (px)
-        self.log(f"stage: {stage} → {self.out}")   # 무엇을 굽는지 항상 남긴다
-
-    @classmethod
-    def stage_candidates(cls) -> str:
-        """configs/pipeline.yaml 의 stages 키들 — 오류 메시지/CLI 도움말용."""
-        try:
-            stages = load_yaml(cls.default_config_path()).get("stages") or {}
-        except FileNotFoundError:
-            return "(없음)"
-        return ", ".join(stages) or "(없음)"
+        self.log(f"stage: {self.stage_name} → {self.out}")   # 무엇을 굽는지 항상 남긴다
 
     # -- 소스 선택 -------------------------------------------------------
 
@@ -264,7 +264,7 @@ class Preprocessor(Stage):
         return [{**by_name[n], **(use[n] or {})} for n in use]   # yaml 순서 유지
 
     def selected_sources(self) -> list:
-        """--only 로 좁힌 소스만 (없으면 스테이지 전체). 이름이 틀리면 바로 알려줍니다."""
+        """config 의 only 로 좁힌 소스만 (없으면 스테이지 전체). 이름이 틀리면 바로 알려줍니다."""
         sources = self.stage_sources()
         if not self.only:
             return sources
@@ -273,7 +273,7 @@ class Preprocessor(Stage):
         unknown = [t for t in self.only if t not in by_name]
         if unknown:
             raise SystemExit(
-                f"[{self.label}] --only 에 없는 소스 이름: {', '.join(unknown)}\n"
+                f"[{self.label}] only 에 없는 소스 이름: {', '.join(unknown)}\n"
                 f"  stage '{self.stage_name}' 의 소스: {', '.join(by_name) or '(없음)'}"
             )
         return [by_name[t] for t in self.only]
@@ -566,7 +566,7 @@ class Preprocessor(Stage):
         sources = self.selected_sources()
         all_names = [s["name"] for s in self.stage_sources()]
         if len(sources) != len(all_names):
-            self.log(f"대상(--only): {', '.join(s['name'] for s in sources)} "
+            self.log(f"대상(only): {', '.join(s['name'] for s in sources)} "
                      f"— 스테이지 전체 {len(all_names)}개 중. 이 소스만 다시 굽고, "
                      f"다른 소스의 기존 산출물은 유지됩니다.")
 
@@ -651,29 +651,25 @@ class Preprocessor(Stage):
                 f"돌리면 빈 검증셋으로 죽습니다.\n"
                 f"  val_ratio > 0 인 소스를 처리해 val 을 만들어 두세요 "
                 f"(단일/stage2 는 인도메인 kimm, stage1 은 공개셋에서 뗍니다).\n"
-                f"  (--only 로 일부만 굽는 중이었다면 먼저 전체를 한 번 처리해야 합니다. "
+                f"  (only 로 일부만 굽는 중이었다면 먼저 전체를 한 번 처리해야 합니다. "
                 f"이번에 만든 train 산출물은 그대로 유지됩니다.)"
             )
-        self.log("다음: python train.py --config <train_config*.yaml>")
+        self.log("다음: python train.py --config <train.*.yaml>")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="공개 + 로컬 데이터를 학습용 YOLO seg 데이터셋으로 전처리",
-        epilog="configs/pipeline.yaml 의 스테이지 후보: " + Preprocessor.stage_candidates(),
+        epilog="configs/ 의 후보: " + Preprocessor.config_candidates(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    # required=True 대신 생성자가 실제 config 의 stages 를 읽어 후보와 함께 거절합니다.
+    # required=True 대신 생성자가 후보 개수를 보고 자동 선택/거절합니다.
     ap.add_argument(
-        "--stage", metavar="NAME",
-        help="구울 스테이지 (필수 — 기본값 없음). configs/pipeline.yaml 의 stages 키",
+        "--config", metavar="YAML",
+        help="스테이지 yaml (후보가 여럿이라 사실상 필수). configs/ 안 파일명 또는 경로. "
+             "일부 소스만 다시 구우려면 yaml 의 only 키를 쓰세요",
     )
-    ap.add_argument(
-        "--only", nargs="+", metavar="SOURCE",
-        help="이 소스만 다시 굽기 (다른 소스의 기존 산출물은 유지)",
-    )
-    args = ap.parse_args()
-    Preprocessor(args.stage, only=args.only).run()
+    Preprocessor(ap.parse_args().config).run()
 
 
 if __name__ == "__main__":

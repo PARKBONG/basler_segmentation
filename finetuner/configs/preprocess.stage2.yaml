@@ -1,0 +1,13 @@
+# Stage 2 (in-domain 적응) — train/val/test 전부 인도메인 kimm.
+#   python preprocess.py --config preprocess.stage2.yaml
+# test 는 최종 모델에 딱 한 번 (eval.final.yaml). 이 수치를 보고
+# 하이퍼파라미터를 다시 만지면 그 순간 오염됩니다.
+# 필드 설명은 preprocess.single.yaml 머리말 참고.
+
+pipeline: pipeline.yaml
+
+out: ../datasets/stage2      # train.stage2.yaml 이 읽음
+use:
+  kimm: {val_ratio: 0.2, test_ratio: 0.1}
+
+# only: [kimm]
