@@ -8,9 +8,11 @@
   (Ultralytics 는 각 split 에 폴더 목록을 지원). test 는 있을 때만 키를 넣습니다.
 
 설계 원칙:
-- 어떤 데이터셋을 굽는지는 configs/preprocess.<이름>.yaml 이 정합니다 — 스테이지
-  config 하나가 소스 구성·크롭·비율 등 전처리 전부를 소유합니다 (다른 yaml 참조 없음,
-  전처리는 소스별·스테이지별로 다르게 적용). 후보가 여럿이라 --config 로 반드시 명시합니다.
+- 전처리에는 스테이지가 없습니다 — configs/preprocess.yaml 하나가 소스 구성·크롭·비율
+  등 전부를 소유하고, 소스마다 raw 를 processed/<이름>/ 으로 한 번만 굽습니다.
+  스테이지(공개 warm-up → in-domain 적응)는 train/eval config 가 어느 data.yaml 을
+  읽을지로 정합니다: 소스별 processed/<이름>/data.yaml + 통합 processed/data.yaml.
+  config 후보가 하나뿐이라 --config 없이 자동으로 읽힙니다.
 - 분할(train/val/test)은 소스 내부에서, oversample 전에 그룹(원본) 단위로 나눕니다.
   Roboflow 증강 사본(..._jpg.rf.<hash>)은 원본 단위로 묶여 같은 split 에만 들어갑니다
   (근중복이 train/val 에 갈라 들어가는 누수 방지).
@@ -25,7 +27,7 @@
   그 이미지는 데이터셋에서 제외됩니다(기존 동작과 동일: 대상 없는 이미지는 안 넣음).
 - 크롭 인자는 소스마다 독립입니다(공유 기본값 없음). 창을 %로 고정하거나
   (width/height/center_x/center_y), auto_crop 으로 이미지마다 라벨에서 직접 잡습니다.
-- config 의 only: 에 이름을 적으면 그 소스만 다시 굽습니다 (생략하면 스테이지 전체). 산출물이
+- config 의 targets: 에 이름을 적으면 그 소스만 다시 굽습니다 (생략하면 전체). 산출물이
   소스별 폴더라서 나머지 소스의 기존 산출물은 유지되고, data.yaml 만 매번 다시 묶입니다.
 - 마음에 안 드는 이미지는 원천(raw)에서 이미지 파일만 지우면 됩니다 — 다음 실행에서
   짝 라벨(.txt)이 자동 삭제됩니다 (이미지가 하나도 없는 폴더는 경로 실수로 보고 보호).
@@ -43,9 +45,7 @@ train.*.yaml 의 증강 하이퍼파라미터로 조절하고, 결과 확인은
   · 로컬(kimm)은 최소 형식으로 하나 작성:  names: {0: wire}\n train: images
 
 사용법:
-    python preprocess.py --config preprocess.single.yaml    # 단일 스테이지
-    python preprocess.py --config preprocess.stage1.yaml    # stage1 (공개 전용)
-    python preprocess.py --config preprocess.stage2.yaml    # stage2 (in-domain)
+    python preprocess.py        # configs/preprocess.yaml 자동 (후보 1개)
 """
 from __future__ import annotations
 
@@ -370,15 +370,16 @@ class Cropper:
 
 class Preprocessor(Stage):
     """
-    소스들을 소스별 산출물 + 통합 data.yaml 의 학습용 데이터셋으로 만드는 단계.
+    소스들을 소스별 산출물 + data.yaml 의 학습용 데이터셋으로 만드는 단계.
 
-    config 는 스테이지당 하나(configs/preprocess.<이름>.yaml)이고 그 스테이지의
-    전처리 전부(names/seed/preview/out/sources/only)를 자급자족으로 소유합니다 —
-    다른 yaml 을 참조하지 않으며, download 쪽과는 datasets/raw/<이름>/ 경로 규약만
-    공유합니다. 전처리는 데이터셋(소스)별·스테이지별로 다르게 적용됩니다.
+    config 는 configs/preprocess.yaml 하나뿐입니다 (후보 1개 → 인자 없이 자동).
+    전처리에는 스테이지가 없습니다 — 소스마다 raw 를 processed/<이름>/ 으로 한 번
+    굽고, 스테이지 구분은 train/eval config 가 어느 data.yaml 을 읽을지로 정합니다
+    (소스별 data.yaml + 전체 통합 data.yaml 을 모두 씁니다). download 쪽과는
+    datasets/raw/<이름>/ 경로 규약만 공유합니다.
     """
 
-    config_glob = "preprocess.*.yaml"
+    config_glob = "preprocess.yaml"
     label = "preprocess"
 
     def __init__(self, config_path=None) -> None:
@@ -387,10 +388,7 @@ class Preprocessor(Stage):
         for key in ("out", "sources"):
             if not self.cfg.get(key):
                 self.fail(f"{key} 가 없습니다 — 기본값으로 정하지 않습니다.")
-        # 로그용 스테이지 이름은 파일명에서 (preprocess.stage1.yaml → stage1)
-        stem = self.config_path.stem
-        self.stage_name = stem.split(".", 1)[1] if "." in stem else stem
-        self.only = list(self.cfg.get("only") or [])
+        self.targets = list(self.cfg.get("targets") or [])
         self.task = str(self.cfg.get("task", "seg"))
         if self.task not in ("seg", "obb"):
             self.fail(f"task 는 seg 또는 obb 여야 합니다: {self.task}")
@@ -406,26 +404,26 @@ class Preprocessor(Stage):
         self._obb_fit_min = 1.0
         self._obb_low = 0             # 품질 0.5 미만 (휘었거나 노이즈 라벨 의심)
         self._obb_dropped = 0         # 퇴화 등으로 변환 못 해 폐기한 라벨 수
-        self.log(f"stage: {self.stage_name} ({self.task}) → {self.out}")   # 무엇을 굽는지 항상 남긴다
+        self.log(f"task: {self.task} → {self.out}")   # 무엇을 굽는지 항상 남긴다
 
     # -- 소스 선택 -------------------------------------------------------
 
-    def stage_sources(self) -> list:
-        """이 스테이지의 소스들 — config 의 sources 그대로 (yaml 순서 유지)."""
+    def all_sources(self) -> list:
+        """config 의 sources 그대로 (yaml 순서 유지)."""
         return list(self.cfg.get("sources") or [])
 
     def selected_sources(self) -> list:
-        """config 의 only 로 좁힌 소스만 (없으면 스테이지 전체). 이름이 틀리면 바로 알려줍니다."""
-        sources = self.stage_sources()
-        if not self.only:
+        """config 의 targets 로 좁힌 소스만 (없으면 전체). 이름이 틀리면 바로 알려줍니다."""
+        sources = self.all_sources()
+        if not self.targets:
             return sources
 
         by_name = {s["name"]: s for s in sources}
-        unknown = [t for t in self.only if t not in by_name]
+        unknown = [t for t in self.targets if t not in by_name]
         if unknown:
-            self.fail(f"only 에 없는 소스 이름: {', '.join(unknown)}\n"
-                      f"  stage '{self.stage_name}' 의 소스: {', '.join(by_name) or '(없음)'}")
-        return [by_name[t] for t in self.only]
+            self.fail(f"targets 에 없는 소스 이름: {', '.join(unknown)}\n"
+                      f"  sources 의 이름: {', '.join(by_name) or '(없음)'}")
+        return [by_name[t] for t in self.targets]
 
     # -- 소스 읽기 -------------------------------------------------------
 
@@ -717,12 +715,17 @@ class Preprocessor(Stage):
     # -- 실행 ------------------------------------------------------------
 
     def write_data_yaml(self) -> tuple[list, list, list]:
-        """디스크에 있는 소스 산출물 전체를 묶는 out/data.yaml 을 다시 쓴다."""
+        """
+        학습용 data.yaml 을 다시 쓴다 — 두 종류:
+        · out/<이름>/data.yaml   소스 하나짜리 (train.stage1 → rf_a, train.stage2 → kimm)
+        · out/data.yaml          디스크의 소스 산출물 전체 통합본 (train.single)
+        스테이지 구분은 여기가 아니라 train/eval config 가 어느 파일을 읽을지로 정합니다.
+        """
         def has_images(d: Path) -> bool:
             return d.is_dir() and any(p.suffix.lower() in IMG_EXTS for p in d.iterdir())
 
         self.out.mkdir(parents=True, exist_ok=True)
-        all_names = [s["name"] for s in self.stage_sources()]  # 이 스테이지의 소스만 묶음
+        all_names = [s["name"] for s in self.all_sources()]
         train = [f"{n}/images/train" for n in all_names
                  if has_images(self.out / n / "images/train")]
         val = [f"{n}/images/val" for n in all_names
@@ -733,8 +736,21 @@ class Preprocessor(Stage):
         stale = sorted(d.name for d in self.out.iterdir()
                        if d.is_dir() and d.name not in all_names)
         if stale:
-            self.log(f"경고: 이 스테이지의 sources 에 없는 산출물 폴더는 data.yaml 에서 "
+            self.log(f"경고: sources 에 없는 산출물 폴더는 data.yaml 에서 "
                      f"제외했습니다: {', '.join(stale)} (안 쓰면 지우세요)")
+
+        # 소스별 data.yaml — 그 소스 산출물이 있는 폴더에만 씁니다.
+        for n in all_names:
+            src_out = self.out / n
+            per = {"path": str(src_out.resolve())}
+            for sp in ("train", "val", "test"):
+                if has_images(src_out / f"images/{sp}"):
+                    per[sp] = f"images/{sp}"
+            if len(per) == 1:      # 산출물이 없는 소스 (targets 로 안 구운 적 없는 경우 등)
+                continue
+            per["names"] = self.final_names
+            with (src_out / "data.yaml").open("w", encoding="utf-8") as f:
+                yaml.safe_dump(per, f, allow_unicode=True, sort_keys=False)
 
         data_yaml = {
             "path": str(self.out.resolve()),
@@ -766,10 +782,10 @@ class Preprocessor(Stage):
 
     def run(self) -> None:
         sources = self.selected_sources()
-        all_names = [s["name"] for s in self.stage_sources()]
+        all_names = [s["name"] for s in self.all_sources()]
         if len(sources) != len(all_names):
-            self.log(f"대상(only): {', '.join(s['name'] for s in sources)} "
-                     f"— 스테이지 전체 {len(all_names)}개 중. 이 소스만 다시 굽고, "
+            self.log(f"대상(targets): {', '.join(s['name'] for s in sources)} "
+                     f"— 전체 {len(all_names)}개 중. 이 소스만 다시 굽고, "
                      f"다른 소스의 기존 산출물은 유지됩니다.")
 
         n_train = n_val = n_test = 0
@@ -860,9 +876,8 @@ class Preprocessor(Stage):
             self.fail(
                 f"val 산출물이 하나도 없습니다 — 이 data.yaml 로 train.py 를 "
                 f"돌리면 빈 검증셋으로 죽습니다.\n"
-                f"  val_ratio > 0 인 소스를 처리해 val 을 만들어 두세요 "
-                f"(단일/stage2 는 인도메인 kimm, stage1 은 공개셋에서 뗍니다).\n"
-                f"  (only 로 일부만 굽는 중이었다면 먼저 전체를 한 번 처리해야 합니다. "
+                f"  val_ratio > 0 인 소스를 처리해 val 을 만들어 두세요.\n"
+                f"  (targets 로 일부만 굽는 중이었다면 먼저 전체를 한 번 처리해야 합니다. "
                 f"이번에 만든 train 산출물은 그대로 유지됩니다.)"
             )
         self.log("다음: python train.py --config <train.*.yaml>")
@@ -874,11 +889,10 @@ def main() -> None:
         epilog="configs/ 의 후보: " + Preprocessor.config_candidates(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    # required=True 대신 생성자가 후보 개수를 보고 자동 선택/거절합니다.
     ap.add_argument(
         "--config", metavar="YAML",
-        help="스테이지 yaml (후보가 여럿이라 사실상 필수). configs/ 안 파일명 또는 경로. "
-             "일부 소스만 다시 구우려면 yaml 의 only 키를 쓰세요",
+        help="설정 yaml (후보가 preprocess.yaml 하나라 생략 시 자동). "
+             "일부 소스만 다시 구우려면 yaml 의 targets 키를 쓰세요",
     )
     Preprocessor(ap.parse_args().config).run()
 

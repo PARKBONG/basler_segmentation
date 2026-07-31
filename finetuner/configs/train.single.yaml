@@ -13,7 +13,7 @@ stages:
 
 train:
   model: yolo26s-seg.pt      # 시작 가중치. 없으면 Ultralytics가 자동 다운로드
-  data: ../datasets/processed/single/data.yaml   # preprocess.py 산출물
+  data: ../datasets/processed/data.yaml   # 전 소스 통합본   # preprocess.py 산출물
   epochs: 100
   imgsz: 640                 # 앱이 640으로 추론 → 640 유지 권장
   batch: -1                  # -1 = GPU 메모리에 맞춰 AutoBatch. 정수로 고정 가능

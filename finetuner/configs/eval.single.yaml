@@ -3,7 +3,7 @@
 # weights 는 train.single.yaml 의 train.project/name 산출물과 짝.
 
 weights: runs/segment/yolo26s-seg-finetune/weights/best.pt
-data: ../datasets/processed/single/data.yaml
+data: ../datasets/processed/data.yaml
 split: val
 imgsz: 640
 device: "0"

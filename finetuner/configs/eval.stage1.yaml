@@ -3,7 +3,7 @@
 # 경로는 finetuner/ 기준.
 
 weights: runs/segment/stage1/weights/best.pt
-data: ../datasets/processed/stage1/data.yaml
+data: ../datasets/processed/rf_a/data.yaml
 split: val
 imgsz: 640
 device: "0"

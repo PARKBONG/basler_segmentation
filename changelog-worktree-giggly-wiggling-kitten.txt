@@ -61,3 +61,16 @@
   - preview 를 out 루트 _preview/ 에서 소스별 out/<소스>/preview/ 로 (count 는 소스당)
   - selftest 118건 ALL PASS. 주의: 기존 datasets/processed·stage1·stage2 구위치
     산출물은 재실행 시 안 쓰임 (gitignore 영역, 각 머신에서 정리). train push 대기
+  - (이후 사용자 지시로 train push, 296c4e5)
+
+2026-08-01  preprocess 스테이지 제거 — preprocess.yaml 하나로 통일
+  - train pull 선행 (OBB task 커밋 fcd562c·eeb6591 수용, ff)
+  - preprocess.single/stage1/stage2.yaml 삭제 → configs/preprocess.yaml 하나
+    (후보 1개라 python preprocess.py 인자 없이 자동). targets: 키로 일부 소스만 재굽기
+  - 산출물: datasets/processed/<소스>/ 직결 (스테이지 층 제거). 소스별
+    processed/<소스>/data.yaml 신규 생성 + 통합 processed/data.yaml 유지
+  - 스테이지는 train/eval 에만: train.stage1 → rf_a/data.yaml, train.stage2 →
+    kimm/data.yaml, train.single → 통합 data.yaml (eval 4벌도 동일하게 이동)
+  - 비율 통일: kimm val 0.2/test 0.1, rf_a val 0.1 (스테이지별 상이하던 것 단일화)
+    주의: train.single 의 val 에 공개(rf_a) val 이 섞이게 됨 — 원치 않으면 별도 논의
+  - selftest 128건 ALL PASS (소스별 data.yaml 검증 추가). train push 대기

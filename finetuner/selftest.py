@@ -8,7 +8,7 @@
   4. 라벨 변환 (transform_label)    — 재정규화 좌표, min_area 폐기, 비폴리곤 폐기
   5. Preprocessor 전체              — 합성 데이터셋으로 소스별 산출물·분할·oversample·크롭
                                       + val/test 누수 없음 (그룹 단위 3-way 분할)
-                                      + class_map 필터 + 통합 data.yaml + --only 필터
+                                      + class_map 필터 + 통합/소스별 data.yaml + targets 필터
                                       + 증분 재굽기 + auto_crop 산출물 + val 없으면 오류
                                       + 이미지 지우면 짝 라벨 자동 삭제 (0장 폴더는 보호)
                                       + 지정 클래스 없는 쌍 자동 삭제 (전멸 시 보호)
@@ -208,7 +208,7 @@ def make_source(root: Path, name: str, count: int, size: int,
 
 
 def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False,
-                   only: list | None = None, test_ratio: float = 0.0,
+                   targets: list | None = None, test_ratio: float = 0.0,
                    task: str = "seg") -> dict:
     """합성 소스 2개로 Preprocessor 를 돌리고 그 인스턴스를 돌려준다(집계값 확인용)."""
     # 중앙에 붙은 사각형 하나 + (junk 클래스) 구석에 하나
@@ -240,8 +240,8 @@ def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False,
         "task": task,
         "preview": {"enabled": preview, "count": 4},
     }
-    if only:
-        cfg["only"] = list(only)
+    if targets:
+        cfg["targets"] = list(targets)
     cfg_path = root / "preprocess.synthetic.yaml"
     with cfg_path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, allow_unicode=True)
@@ -294,6 +294,15 @@ def test_pipeline_no_crop(root: Path) -> None:
           and data["names"] == {0: "wire"}, str(data))
     check("pipeline: test_ratio 0 이면 data.yaml 에 test 키 없음", "test" not in data,
           str(data.get("test")))
+
+    # 소스별 data.yaml — 스테이지 학습(train.stage1/stage2)이 읽는 파일
+    kimm_dy = yaml.safe_load((out / "kimm/data.yaml").read_text(encoding="utf-8"))
+    check("pipeline: 소스별 data.yaml (kimm, val 포함)",
+          kimm_dy.get("train") == "images/train" and kimm_dy.get("val") == "images/val"
+          and kimm_dy.get("names") == {0: "wire"}, str(kimm_dy))
+    rf_dy = yaml.safe_load((out / "rf_a/data.yaml").read_text(encoding="utf-8"))
+    check("pipeline: 소스별 data.yaml (rf_a, val 없으면 키 생략)",
+          rf_dy.get("train") == "images/train" and "val" not in rf_dy, str(rf_dy))
 
 
 def test_pipeline_crop(root: Path) -> None:
@@ -364,31 +373,31 @@ def test_pipeline_auto_crop(root: Path) -> None:
         check("auto: 원본 크기로 클램프", (im.width, im.height) == (800, 800), f"{im.size}")
 
 
-def test_pipeline_only(root: Path) -> None:
-    out = root / "out_only"
+def test_pipeline_targets(root: Path) -> None:
+    out = root / "out_targets"
     # val_ratio 0 소스만 처리하면 val 이 비는데, 그 data.yaml 로 학습하면 Ultralytics 가
     # 빈 검증셋 빌드에서 죽습니다 → preprocess 단계에서 SystemExit 로 미리 막아야 함.
-    expect_raises("only: val 산출물 없으면 SystemExit",
+    expect_raises("targets: val 산출물 없으면 SystemExit",
                   SystemExit,
                   lambda: run_preprocess(root / "srcE", out, {"enabled": False},
-                                         only=["rf_a"]),
+                                         targets=["rf_a"]),
                   "val 산출물")
 
     # 막더라도 이번에 만든 산출물과 data.yaml 은 보존되어야 함 (증분 워크플로 유지)
     train_imgs = sorted((out / "rf_a/images/train").glob("*.png"))
-    check("only: 지정한 소스만 처리(산출물 보존)", len(train_imgs) == 6, f"{len(train_imgs)}")
-    check("only: 빠진 소스는 산출물에 없음", not (out / "kimm").exists())
+    check("targets: 지정한 소스만 처리(산출물 보존)", len(train_imgs) == 6, f"{len(train_imgs)}")
+    check("targets: 빠진 소스는 산출물에 없음", not (out / "kimm").exists())
 
     data = yaml.safe_load((out / "data.yaml").read_text(encoding="utf-8"))
-    check("only: data.yaml 은 있는 산출물만",
+    check("targets: data.yaml 은 있는 산출물만",
           data["train"] == ["rf_a/images/train"], str(data["train"]))
 
     # 없는 이름은 조용히 넘어가지 않고 바로 알려줘야 함
     try:
-        run_preprocess(root / "srcF", root / "out_bad", {"enabled": False}, only=["nope"])
-        check("only: 오타는 SystemExit", False, "예외가 안 났음")
+        run_preprocess(root / "srcF", root / "out_bad", {"enabled": False}, targets=["nope"])
+        check("targets: 오타는 SystemExit", False, "예외가 안 났음")
     except SystemExit as e:
-        check("only: 오타는 SystemExit", "nope" in str(e), str(e).splitlines()[0])
+        check("targets: 오타는 SystemExit", "nope" in str(e), str(e).splitlines()[0])
 
 
 def test_pipeline_incremental(root: Path) -> None:
@@ -397,7 +406,7 @@ def test_pipeline_incremental(root: Path) -> None:
     run_preprocess(root / "srcG", out, {"enabled": False})                    # 전체
     before = [p.name for p in sorted((out / "kimm/images/train").glob("*.png"))]
 
-    run_preprocess(root / "srcG", out, {"enabled": False}, only=["rf_a"])     # rf_a 만
+    run_preprocess(root / "srcG", out, {"enabled": False}, targets=["rf_a"])  # rf_a 만
     after = [p.name for p in sorted((out / "kimm/images/train").glob("*.png"))]
     check("incremental: 다른 소스 산출물 보존", before == after and bool(before),
           f"before={len(before)} after={len(after)}")
@@ -692,36 +701,29 @@ def test_trainer_data_and_weights(root: Path) -> None:
     check("model: 있는 checkpoint 는 절대경로로", Trainer(p).start_weights() == str(ckpt))
 
 
-def test_preprocess_config_required() -> None:
-    """preprocess 는 config 후보가 여럿(단일/stage1/stage2) → 생략·오타는 오류."""
-    expect_raises("preprocess: config 생략은 SystemExit", SystemExit, Preprocessor, "명시")
+def test_preprocess_config_auto() -> None:
+    """preprocess 는 config 후보가 preprocess.yaml 하나 → 인자 없이 자동, 오타는 오류."""
+    st = Preprocessor()   # 후보 1개 → 자동 선택 (실제 저장소 config 로드)
+    check("preprocess: 후보 1개면 자동 선택", st.config_path.name == "preprocess.yaml",
+          str(st.config_path))
     expect_raises("preprocess: 없는 config 는 SystemExit + 후보", SystemExit,
                   lambda: Preprocessor("preprocess.stage9.yaml"), "후보")
     check("preprocess: config 후보 목록",
-          "preprocess.stage1.yaml" in Preprocessor.config_candidates(),
+          "preprocess.yaml" in Preprocessor.config_candidates(),
           Preprocessor.config_candidates())
 
 
 def test_real_pipeline_config() -> None:
-    """저장소의 configs/preprocess.*.yaml + download.yaml 이 규약을 지키는지 (config 린트)."""
-    names = sorted(p.name for p in Preprocessor.candidate_paths())
-    required = {"preprocess.single.yaml", "preprocess.stage1.yaml", "preprocess.stage2.yaml"}
-    check("configs: preprocess 단일/stage1/stage2 존재", required <= set(names),
-          ", ".join(names))
-
-    outs = {}
-    for name in names:
-        st = Preprocessor(name)
-        srcs = st.stage_sources()
-        check(f"{name}: names/sources/out",
-              bool(st.cfg.get("names")) and bool(srcs) and bool(st.cfg.get("out")))
-        # val 이 없으면 run() 이 SystemExit 로 막으므로, config 부터 걸러낸다
-        check(f"{name}: val_ratio > 0 소스 존재",
-              any(float(s.get("val_ratio", 0)) > 0 for s in srcs))
-        check(f"{name}: task 유효", st.task in ("seg", "obb"), st.task)
-        outs[name] = str(st.cfg.get("out"))
-    check("preprocess.*.yaml: out 이 전부 다름",
-          len(set(outs.values())) == len(outs), str(outs))
+    """저장소의 configs/preprocess.yaml + download.yaml 이 규약을 지키는지 (config 린트)."""
+    st = Preprocessor("preprocess.yaml")
+    srcs = st.all_sources()
+    check("preprocess.yaml: names/sources/out",
+          bool(st.cfg.get("names")) and bool(srcs) and bool(st.cfg.get("out")))
+    check("preprocess.yaml: task 유효", st.task in ("seg", "obb"), st.task)
+    # 소스별 data.yaml 이 각 스테이지 학습(train.stage1/stage2)의 검증셋이 되므로,
+    # 모든 소스가 val 을 가져야 한다 (없으면 그 소스로 학습 시 빈 val 로 죽음)
+    no_val = [s["name"] for s in srcs if not float(s.get("val_ratio", 0)) > 0]
+    check("preprocess.yaml: 모든 소스 val_ratio > 0", not no_val, str(no_val))
 
     # download.py 쪽 규약 — 내려받을 소스는 workspace/project 가 있어야 함
     all_sources = yaml.safe_load(
@@ -731,14 +733,11 @@ def test_real_pipeline_config() -> None:
           bool(rf) and all(s["roboflow"].get("workspace") and s["roboflow"].get("project")
                            for s in rf),
           ", ".join(s["name"] for s in rf) or "(없음)")
-    # 다운로드 소스의 path 는 어떤 preprocess config 와도 어긋나면 안 됨 —
+    # 다운로드 소스의 path 는 preprocess 쪽과 어긋나면 안 됨 —
     # 두 쪽이 공유하는 유일한 계약이 datasets/raw/<이름>/ 경로이기 때문.
-    pre_paths = {}
-    for name in names:
-        for src in yaml.safe_load((CONFIG_DIR / name).read_text(encoding="utf-8")).get("sources") or []:
-            pre_paths.setdefault(src["name"], set()).add(str(src.get("path")))
+    pre_paths = {s["name"]: str(s.get("path")) for s in srcs}
     mismatch = [s["name"] for s in all_sources
-                if s["name"] in pre_paths and str(s.get("path")) not in pre_paths[s["name"]]]
+                if s["name"] in pre_paths and str(s.get("path")) != pre_paths[s["name"]]]
     check("download.yaml: path 가 preprocess 쪽과 일치", not mismatch, str(mismatch))
 
 
@@ -787,13 +786,13 @@ def main() -> int:
         test_pipeline_no_crop(root)
         test_pipeline_crop(root)
         test_pipeline_auto_crop(root)
-        test_pipeline_only(root)
+        test_pipeline_targets(root)
         test_pipeline_incremental(root)
         test_pipeline_three_way(root)
         test_pipeline_obb(root)
         test_orphan_label_cleanup(root)
         test_no_class_cleanup(root)
-        test_preprocess_config_required()
+        test_preprocess_config_auto()
         test_real_pipeline_config()
         test_real_eval_configs()
         test_trainer_config_required(root)

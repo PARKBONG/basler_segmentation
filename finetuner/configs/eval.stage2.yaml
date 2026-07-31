@@ -2,7 +2,7 @@
 #   python eval.py --config eval.stage2.yaml
 
 weights: runs/segment/stage2/weights/best.pt
-data: ../datasets/processed/stage2/data.yaml
+data: ../datasets/processed/kimm/data.yaml
 split: val
 imgsz: 640
 device: "0"
