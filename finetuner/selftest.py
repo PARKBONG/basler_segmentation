@@ -406,6 +406,11 @@ def test_split_group() -> None:
           == Preprocessor.split_group("frame12_jpg.rf.yyyy"))
     check("split_group: 일반 stem 은 그대로",
           Preprocessor.split_group("IMG_0042") == "IMG_0042")
+    check("split_group: download 인덱스 접두어는 벗기고 그룹핑",
+          Preprocessor.split_group("0003__frame12_jpg.rf.xxxx")
+          == Preprocessor.split_group("0017__frame12_jpg.rf.yyyy"))
+    check("split_group: 인덱스 접두어 + 일반 stem",
+          Preprocessor.split_group("0042__cap_001") == "cap_001")
 
 
 def test_pipeline_three_way(root: Path) -> None:

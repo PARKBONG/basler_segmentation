@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import random
+import re
 import shutil
 from pathlib import Path
 
@@ -514,7 +515,11 @@ class Preprocessor(Stage):
         `<원본>_jpg.rf.<hash>` 이름으로 여러 split 에 흩어 놓으므로, `.rf.` 앞부분으로
         묶어 근중복이 train/val 에 갈라 들어가는 누수를 막습니다. 그 외 파일은
         stem 자체가 그룹(= 이미지 단위 분할)입니다.
+
+        download.py 가 붙이는 0000__ 인덱스 접두어는 사본마다 달라 그룹을 깨므로
+        먼저 벗깁니다 (같은 규약: download.Downloader.INDEX_RE).
         """
+        stem = re.sub(r"^\d+__", "", stem)
         return stem.split(".rf.")[0] if ".rf." in stem else stem
 
     def run(self) -> None:
