@@ -15,4 +15,4 @@
   - train(61ca4fd)을 이 브랜치로 merge — conflict 없이 auto-merge
   - 들어온 것: download 인덱스 접두어(0000__, 39449af) + cached-tumbling-mountain changelog
   - split_group 접두어 벗기기와 통합 config 구조가 함께 동작 확인 (selftest 105건 ALL PASS)
-  - train 으로의 역방향 merge/push 는 아직 안 함 (사용자 지시 대기)
+  - selftest 확인 후 train 으로 fast-forward merge + origin/train push 완료 (사용자 지시)
