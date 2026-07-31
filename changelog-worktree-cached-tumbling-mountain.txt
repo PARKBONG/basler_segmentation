@@ -1,0 +1,6 @@
+# changelog — worktree-cached-tumbling-mountain
+# 이 워크트리 세션에서 수행한 작업 요약 (merge 시 참고용)
+
+2026-08-01  download: Roboflow train/valid/test 분할을 받은 직후 kimm처럼 images/+labels/ 한 덩어리로 합침 (merge_splits, data.yaml → train: images). 분할은 preprocess가 담당. [41cf914, train에 merge+push됨]
+2026-08-01  download: raw 파일명 앞에 0000__ 인덱스 접두어 부여 (index_files, 멱등). preprocess.split_group은 접두어 벗기고 그룹핑 → .rf. 증강 사본 누수 방지 유지. selftest 케이스 추가. [39449af, train에 merge됨, push 안 함]
+2026-08-01  기존 datasets/raw/rf_a 41장을 일회성으로 flat+인덱스 구조로 변환 (git 무관, datasets는 gitignore).
