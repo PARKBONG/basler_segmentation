@@ -1,8 +1,8 @@
 """
 공개(Roboflow Universe) 데이터셋을 SDK로 다운로드.
 
-download_config.yaml 의 각 소스를 해당 path 폴더에 받아옵니다.
-받아온 폴더는 preprocess_config.yaml 의 sources 에서 같은 path 로 참조합니다
+download_config.yaml 의 sources 중 roboflow: 블록이 있는 소스를 해당 path 폴더에
+받아옵니다. preprocess.py 도 같은 파일의 같은 path 를 읽으므로 따로 맞출 게 없습니다
 (preprocess 는 폴더가 없으면 "download 를 먼저 돌리라"고 알려줍니다).
 
 Roboflow export 의 train/valid/test 분할은 받은 직후 kimm 과 같은
@@ -57,7 +57,7 @@ class Downloader(Stage):
             p = dest / name
             if p.exists():
                 names = normalize_names(load_yaml(p).get("names"))
-                self.log(f"  클래스: {list(names.values())}  → preprocess_config class_map 에 사용")
+                self.log(f"  클래스: {list(names.values())}  → sources 의 class_map 에 사용")
                 return
         self.log("  data.yaml 을 찾지 못했습니다. 폴더를 직접 확인하세요.")
 
@@ -163,7 +163,7 @@ class Downloader(Stage):
         rf = Roboflow(api_key=roboflow_api_key())
         done = sum(self.download_one(rf, s) for s in sources)
 
-        self.log(f"완료: {done}/{len(sources)} 소스. 다음: python preprocess.py")
+        self.log(f"완료: {done}/{len(sources)} 소스. 다음: python preprocess.py --stage <이름>")
 
 
 if __name__ == "__main__":

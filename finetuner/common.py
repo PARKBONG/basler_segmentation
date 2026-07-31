@@ -1,16 +1,15 @@
 """
 파이프라인 공통 기반 — 각 단계가 공유하는 config 로드 · 경로 해석 · 로그.
 
-config 가 하나뿐인 단계는 자기 이름의 yaml 을 읽습니다 (명령행 인자 없음):
+download 와 preprocess 는 통합 설정 download_config.yaml 을 자동으로 읽습니다
+(config 인자 없음). 다만 후보가 여럿인 선택은 **반드시 명시**해야 합니다 —
+기본값으로 조용히 넘어가면 의도한 것과 다른 데이터/설정으로 학습해도 알 수
+없기 때문입니다. preprocess 는 스테이지(단일/stage1/stage2)를, train 은 config
+파일을 명시합니다:
 
-    download.py    → download_config.yaml     공개셋 획득
-
-preprocess 와 train 은 config 가 여럿(단일/stage1/stage2)이라 **반드시 명시**해야
-합니다. 기본값으로 조용히 넘어가면 의도한 것과 다른 데이터/설정으로 학습해도 알 수
-없기 때문입니다:
-
-    preprocess.py --config preprocess_config.stage1.yaml   데이터셋 굽기
-    train.py      --config train_config.stage1.yaml        학습 + ONNX export
+    download.py                          공개셋 획득 (download_config.yaml 자동)
+    preprocess.py --stage stage1         데이터셋 굽기 (같은 yaml 의 stages 중 하나)
+    train.py --config train_config.stage1.yaml   학습 + ONNX export
 
 어느 쪽이든 읽은 config 경로는 항상 로그 첫 줄에 찍습니다.
 경로는 모두 이 폴더(finetuner/) 기준 상대경로이거나 절대경로입니다.
@@ -68,10 +67,11 @@ class Stage:
     서브클래스는 `config_name` 과 `run()` 만 정의하면 됩니다. 단계끼리 import 해서
     한 프로세스 안에서 이어 붙이는 것도 가능합니다:
 
-        Downloader().run(); Preprocessor().run(); Trainer("train_config.yaml").run()
+        Downloader().run(); Preprocessor("single").run(); Trainer("train_config.yaml").run()
 
     `explicit_config = True` 인 단계는 config 를 생략할 수 없습니다 — 후보가 여러 개라
     기본값을 고르는 순간 "무엇으로 학습했는지" 를 잃기 때문입니다.
+    (preprocess 는 config 가 하나가 됐지만 같은 이유로 스테이지를 생략할 수 없습니다.)
     """
 
     config_name: str = ""      # 단일 config 단계의 기본 파일명 / 오류 메시지의 예시
