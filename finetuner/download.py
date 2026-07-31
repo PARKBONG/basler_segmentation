@@ -61,6 +61,29 @@ class Downloader(Stage):
                 return
         self.log("  data.yaml 을 찾지 못했습니다. 폴더를 직접 확인하세요.")
 
+    INDEX_RE = re.compile(r"^\d+__")   # 파일명 앞 인덱스 접두어 (preprocess 도 같은 규약)
+
+    def index_files(self, dest: Path) -> None:
+        """
+        images/·labels/ 의 파일명 맨 앞에 0000__ 식 인덱스를 붙인다 (이미지·라벨 짝 유지).
+
+        이름순으로 매기므로 같은 내용이면 재실행해도 번호가 같습니다. 이미 인덱스가
+        붙어 있으면 벗기고 다시 매겨 중복 접두어가 생기지 않습니다. preprocess 의
+        split_group 이 이 접두어를 벗기고 그룹핑하므로 누수 방지와 충돌하지 않습니다.
+        """
+        img_out = dest / "images"
+        lbl_out = dest / "labels"
+        pairs = []
+        for img in img_out.iterdir():
+            bare = self.INDEX_RE.sub("", img.stem)
+            pairs.append((bare, img))
+        for i, (bare, img) in enumerate(sorted(pairs)):
+            lbl = lbl_out / (img.stem + ".txt")
+            stem = f"{i:04d}__{bare}"
+            img.rename(img_out / (stem + img.suffix))
+            if lbl.exists():
+                lbl.rename(lbl_out / (stem + ".txt"))
+
     def merge_splits(self, dest: Path) -> None:
         """
         Roboflow 가 나눠 준 train/valid/test 를 kimm 처럼 images/ + labels/ 로 합친다.
@@ -90,6 +113,8 @@ class Downloader(Stage):
                     lbl.rename(lbl_out / (stem + ".txt"))
                 moved += 1
             shutil.rmtree(split_dir)
+
+        self.index_files(dest)
 
         # data.yaml 재작성: names 등은 유지, split 경로만 한 덩어리로.
         dy_path = next((dest / n for n in ("data.yaml", "data.yml")
