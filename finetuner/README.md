@@ -7,7 +7,7 @@ yolo26s-seg 파인튜닝 파이프라인. 코드/설정만 여기 두고, 실제
 | 파일 | 클래스 | config | 역할 |
 |------|--------|--------|------|
 | `download.py` | `Downloader` | `download.yaml` (후보 1개 → 자동) | 공개(Roboflow) 데이터셋 획득 |
-| `preprocess.py` | `Preprocessor` | `preprocess.*.yaml` (**--config**) | 소스별 개별 처리(크롭·리사이즈·클래스 통일·train/val/test 분할·oversample) 후 하나로 병합 |
+| `preprocess.py` | `Preprocessor` | `preprocess.*.yaml` (**--config**) | 소스별 개별 처리(크롭·리사이즈·클래스 통일·train/val/test 분할·oversample) 후 하나로 병합. `task: obb` 면 seg 폴리곤을 회전 사각형(OBB) 라벨로 변환 |
 | `train.py` | `Trainer` | `train.*.yaml` (**--config**) | 파인튜닝 · 증강 미리보기 · ONNX export |
 | `eval.py` | `Evaluator` | `eval.*.yaml` (**--config**) | 학습된 checkpoint 를 지정 split 에서 평가 |
 | `common.py` | `Stage` | — | config 로드 · 경로 해석 · 로그 |

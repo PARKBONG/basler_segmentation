@@ -17,6 +17,9 @@
 - test 는 test_ratio 로 뗍니다 — 최종 모델에 딱 한 번 쓰는 평가용 (eval.py --split test).
 - oversample 은 각 소스의 train 쪽에만 물리 복제로 적용 (val/test 누수 없음).
 - 클래스 선택/이름통일은 class_map(이름 기반)이 담당 → source index 차이에 안전.
+- task: obb 면 최종 라벨을 회전 사각형(OBB, 꼭지점 4개)으로 변환합니다 — 크롭·클리핑이
+  끝난 폴리곤에 최종 픽셀 공간에서 최소 면적 회전 사각형을 피팅 (RMSE 최적화가 아니라
+  기하 해법 — 결정론적이고 폴리곤 전체를 항상 덮음). 피팅 품질은 로그로 보고합니다.
 - 크롭은 이미지와 폴리곤 라벨을 함께 변환합니다. 창 밖으로 나간 인스턴스는 잘리고,
   남은 면적이 min_area 미만이면 인스턴스째 폐기, 살아남은 인스턴스가 하나도 없으면
   그 이미지는 데이터셋에서 제외됩니다(기존 동작과 동일: 대상 없는 이미지는 안 넣음).
@@ -47,6 +50,7 @@ train.*.yaml 의 증강 하이퍼파라미터로 조절하고, 결과 확인은
 from __future__ import annotations
 
 import argparse
+import math
 import random
 import shutil
 from pathlib import Path
@@ -207,6 +211,94 @@ def transform_label(line: str, src_w: int, src_h: int,
     return " ".join(out)
 
 
+def convex_hull(points: list) -> list:
+    """Andrew monotone chain — 반시계 방향 볼록 껍질. 중복점은 제거."""
+    pts = sorted(set(points))
+    if len(pts) <= 2:
+        return pts
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower: list = []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    upper: list = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]
+
+
+def min_area_rect(points: list) -> tuple[list, float]:
+    """
+    점들을 모두 덮는 최소 면적 회전 사각형 (rotating calipers).
+
+    최적 사각형은 항상 볼록 껍질의 어느 한 변과 평행하므로, 껍질의 변마다
+    그 방향으로 정렬한 경계 사각형을 재고 가장 작은 것을 고릅니다.
+    반환: (꼭지점 4개 [(x, y) × 4, 인접 순서], 면적). 퇴화(일직선)면 면적 0.
+    """
+    hull = convex_hull(points)
+    if len(hull) < 3:
+        p0 = hull[0]
+        p1 = hull[-1]
+        return [p0, p1, p1, p0], 0.0
+
+    best = None
+    n = len(hull)
+    for i in range(n):
+        x0, y0 = hull[i]
+        ex, ey = hull[(i + 1) % n][0] - x0, hull[(i + 1) % n][1] - y0
+        length = math.hypot(ex, ey)
+        if length == 0:
+            continue
+        ux, uy = ex / length, ey / length          # 변 방향축 u, 법선축 v = (-uy, ux)
+        us = [(px - x0) * ux + (py - y0) * uy for px, py in hull]
+        vs = [(py - y0) * ux - (px - x0) * uy for px, py in hull]
+        area = (max(us) - min(us)) * (max(vs) - min(vs))
+        if best is None or area < best[0]:
+            best = (area, x0, y0, ux, uy, min(us), max(us), min(vs), max(vs))
+
+    area, x0, y0, ux, uy, u0, u1, v0, v1 = best
+
+    def corner(u, v):
+        return (x0 + u * ux - v * uy, y0 + u * uy + v * ux)
+
+    return [corner(u0, v0), corner(u1, v0), corner(u1, v1), corner(u0, v1)], area
+
+
+def polygon_to_obb(line: str, w: int, h: int) -> tuple[str, float] | None:
+    """
+    seg 라벨 한 줄(정규화 폴리곤)을 OBB 한 줄(꼭지점 4개, 정규화)로 변환.
+
+    피팅은 최종 이미지의 **픽셀 공간**에서 합니다 — 정규화 공간은 가로세로
+    비율이 뭉개져 각도가 왜곡되기 때문. 반환은 (obb 줄, 피팅 품질) 이며
+    품질 = 폴리곤 면적 / OBB 면적 (OBB 가 폴리곤을 덮으므로 IoU 와 같음).
+    폴리곤이 아니거나 퇴화면 None.
+    """
+    parts = line.split()
+    coords = [float(v) for v in parts[1:]]
+    if len(coords) < 6 or len(coords) % 2:
+        return None
+    pts = [(coords[i] * w, coords[i + 1] * h) for i in range(0, len(coords), 2)]
+    area = polygon_area(pts)
+    if area <= 0:
+        return None
+    corners, rect_area = min_area_rect(pts)
+    if rect_area <= 0:
+        return None
+
+    out = [parts[0]]
+    for x, y in corners:
+        out.append(f"{min(max(x / w, 0.0), 1.0):.6f}")
+        out.append(f"{min(max(y / h, 0.0), 1.0):.6f}")
+    return " ".join(out), min(area / rect_area, 1.0)
+
+
+
 class Cropper:
     """
     소스 하나의 crop 설정 해석 + 이미지별 창 계산·라벨 변환 + 크롭 통계.
@@ -299,6 +391,9 @@ class Preprocessor(Stage):
         stem = self.config_path.stem
         self.stage_name = stem.split(".", 1)[1] if "." in stem else stem
         self.only = list(self.cfg.get("only") or [])
+        self.task = str(self.cfg.get("task", "seg"))
+        if self.task not in ("seg", "obb"):
+            self.fail(f"task 는 seg 또는 obb 여야 합니다: {self.task}")
         self.final_names = normalize_names(self.cfg.get("names"))
         self.final_ids = {v: k for k, v in self.final_names.items()}  # name → id
         self.out = self.resolve(self.cfg["out"])
@@ -306,7 +401,12 @@ class Preprocessor(Stage):
         self._dropped_instances = 0   # 크롭 창 밖으로 나가 폐기된 인스턴스 수
         self._undersized = 0          # auto_crop 창이 min_size 에 못 미친 이미지 수
         self._undersized_min = 0      # 그 중 가장 작았던 변 (px)
-        self.log(f"stage: {self.stage_name} → {self.out}")   # 무엇을 굽는지 항상 남긴다
+        self._obb_count = 0           # obb 로 변환된 인스턴스 수
+        self._obb_fit_sum = 0.0       # 피팅 품질(폴리곤/OBB 면적비) 누적
+        self._obb_fit_min = 1.0
+        self._obb_low = 0             # 품질 0.5 미만 (휘었거나 노이즈 라벨 의심)
+        self._obb_dropped = 0         # 퇴화 등으로 변환 못 해 폐기한 라벨 수
+        self.log(f"stage: {self.stage_name} ({self.task}) → {self.out}")   # 무엇을 굽는지 항상 남긴다
 
     # -- 소스 선택 -------------------------------------------------------
 
@@ -446,12 +546,48 @@ class Preprocessor(Stage):
                     continue
                 rect, lines = cropped
 
+                if self.task == "obb":
+                    lines = self.obb_lines(img, lines, rect, src.get("resize"))
+                    if not lines:
+                        continue          # 변환 가능한 인스턴스가 없으면 이미지째 제외
+
                 items.append((img, lines, rect))
                 seen.add(img.name)
 
         self.prune_no_class_pairs(src["name"], class_map, items, no_class)
         self.absorb_crop_stats(cropper)
         return items
+
+    def obb_lines(self, img: Path, lines: list, rect, resize) -> list:
+        """
+        seg 폴리곤 줄들을 OBB 줄로 변환 — split 결정 전에 해야 '변환 불가로 빠진
+        이미지'가 train/val 개수에 섞이지 않습니다. 피팅은 라벨이 실제로 해석될
+        최종 이미지 크기(resize > 크롭 창 > 원본 순) 기준 픽셀 공간에서 합니다.
+        """
+        if resize:
+            w, h = ((int(resize), int(resize))
+                    if isinstance(resize, (int, float)) else tuple(resize))
+        elif rect is not None:
+            w, h = rect[2], rect[3]
+        else:
+            from PIL import Image
+            with Image.open(img) as im:
+                w, h = im.width, im.height
+
+        out = []
+        for line in lines:
+            got = polygon_to_obb(line, w, h)
+            if got is None:
+                self._obb_dropped += 1
+                continue
+            obb, fit = got
+            out.append(obb)
+            self._obb_count += 1
+            self._obb_fit_sum += fit
+            self._obb_fit_min = min(self._obb_fit_min, fit)
+            if fit < 0.5:
+                self._obb_low += 1
+        return out
 
     def absorb_crop_stats(self, cropper: Cropper) -> None:
         """소스별 Cropper 의 통계를 실행 전체(run 마지막 로그) 카운터에 합산."""
@@ -687,6 +823,15 @@ class Preprocessor(Stage):
                      f"val +{counts['val']}, test +{counts['test']}  [{how}]")
 
         train_dirs, val_dirs, test_dirs = self.write_data_yaml()
+
+        if self.task == "obb" and (self._obb_count or self._obb_dropped):
+            self.log(f"seg→obb 변환 {self._obb_count}개: 피팅 품질(폴리곤/OBB 면적비) "
+                     f"평균 {self._obb_fit_sum / max(self._obb_count, 1):.3f}, "
+                     f"최소 {self._obb_fit_min:.3f}"
+                     + (f", 0.5 미만 {self._obb_low}개 — 휘었거나 대각 노이즈 라벨인지 "
+                        f"_preview 로 확인하세요" if self._obb_low else ""))
+            if self._obb_dropped:
+                self.log(f"obb 변환 불가(퇴화 폴리곤)로 폐기된 라벨 {self._obb_dropped}개")
 
         if self._dropped_instances or self._dropped_empty:
             self.log(f"크롭으로 폐기된 인스턴스 {self._dropped_instances}개 "

@@ -32,7 +32,8 @@ import yaml
 from PIL import Image
 
 from common import CONFIG_DIR, HERE
-from preprocess import (Preprocessor, auto_crop_rect, clip_polygon, crop_rect, label_bbox,
+from preprocess import (Preprocessor, auto_crop_rect, clip_polygon, convex_hull, crop_rect,
+                        label_bbox, min_area_rect, polygon_to_obb,
                         polygon_area, transform_label)
 from eval import Evaluator  # ultralytics 는 run() 안에서 import 하므로 여기선 불필요
 from train import Trainer
@@ -207,7 +208,8 @@ def make_source(root: Path, name: str, count: int, size: int,
 
 
 def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False,
-                   only: list | None = None, test_ratio: float = 0.0) -> dict:
+                   only: list | None = None, test_ratio: float = 0.0,
+                   task: str = "seg") -> dict:
     """합성 소스 2개로 Preprocessor 를 돌리고 그 인스턴스를 돌려준다(집계값 확인용)."""
     # 중앙에 붙은 사각형 하나 + (junk 클래스) 구석에 하나
     def local_lines(i):
@@ -235,6 +237,7 @@ def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False,
         ],
         "out": str(out),
         "seed": 0,
+        "task": task,
         "preview": {"enabled": preview, "count": 4},
     }
     if only:
@@ -491,6 +494,68 @@ def test_no_class_cleanup(root: Path) -> None:
           f"{n_before}쌍 유지 기대")
 
 
+def test_min_area_rect() -> None:
+    """convex hull + 최소 면적 회전 사각형 + seg→obb 변환."""
+    # 내부점은 hull 에서 빠진다
+    hull = convex_hull([(0, 0), (10, 0), (10, 10), (0, 10), (5, 5)])
+    check("hull: 내부점 제거", len(hull) == 4 and (5, 5) not in hull, str(hull))
+
+    # 축 정렬 사각형 → 자기 자신
+    corners, area = min_area_rect([(0, 0), (10, 0), (10, 10), (0, 10)])
+    check("obb: 축 정렬 사각형은 그대로", approx(area, 100.0), f"area={area}")
+
+    # 45° 회전 사각형 → 축 정렬 bbox(100)가 아니라 자기 자신(50)
+    corners, area = min_area_rect([(0, 0), (5, 5), (0, 10), (-5, 5)])
+    check("obb: 회전 사각형 방향 복원", approx(area, 50.0), f"area={area}")
+
+    # 가늘고 긴 대각 평행사변형 — wire 형태. 대각 방향 폭 2/√2 × 길이 √200 = 20
+    corners, area = min_area_rect([(0, 0), (10, 10), (9, 11), (-1, 1)])
+    check("obb: 대각 세장형 피팅", approx(area, 20.0, 1e-6), f"area={area}")
+
+    # 정규화 라벨 한 줄 변환: 축 정렬 정사각형 → 좌표 {0.4, 0.6}, 품질 1.0
+    got = polygon_to_obb("0 0.40 0.40 0.60 0.40 0.60 0.60 0.40 0.60", 100, 100)
+    check("obb: 변환 성공", got is not None)
+    if got:
+        line, fit = got
+        vals = sorted(set(round(float(v), 4) for v in line.split()[1:]))
+        check("obb: 좌표 보존 + 8개", len(line.split()) == 9 and vals == [0.4, 0.6],
+              f"{vals}")
+        check("obb: 포함 시 품질 1.0", approx(fit, 1.0, 1e-6), f"fit={fit}")
+
+    check("obb: 퇴화 폴리곤(일직선)은 None",
+          polygon_to_obb("0 0.1 0.1 0.5 0.5 0.9 0.9", 100, 100) is None)
+    check("obb: 비폴리곤 줄은 None", polygon_to_obb("0 0.5 0.5 0.2 0.2", 100, 100) is None)
+
+
+def test_pipeline_obb(root: Path) -> None:
+    """task: obb 파이프라인 — 라벨이 꼭지점 4개 형식으로 나오고 개수가 유지되는지."""
+    out = root / "out_obb"
+    stage = run_preprocess(root, out, {"enabled": False}, task="obb")
+    check("obb 파이프라인: 변환 수 집계", stage._obb_count > 0, f"{stage._obb_count}")
+
+    bad_fields = bad_range = 0
+    n_lines = 0
+    for split in ("train", "val"):
+        for lbl in (out / "kimm" / f"labels/{split}").glob("*.txt"):
+            for line in lbl.read_text(encoding="utf-8").splitlines():
+                n_lines += 1
+                v = line.split()
+                if len(v) != 9:
+                    bad_fields += 1
+                elif not all(0.0 <= float(x) <= 1.0 for x in v[1:]):
+                    bad_range += 1
+    check("obb 파이프라인: 모든 라벨이 cls+꼭지점4개(9필드)", n_lines > 0 and bad_fields == 0,
+          f"{n_lines}줄, 형식 위반 {bad_fields}")
+    check("obb 파이프라인: 좌표 0~1 범위", bad_range == 0, f"{bad_range}")
+
+    # seg 로 돌린 것과 이미지 산출 수가 같아야 함 (변환이 이미지를 잃지 않음)
+    seg_out = root / "out_obb_seg"
+    seg = run_preprocess(root, seg_out, {"enabled": False}, task="seg")
+    n_obb = len(list((out / "kimm/images/train").glob("*")))
+    n_seg = len(list((seg_out / "kimm/images/train").glob("*")))
+    check("obb 파이프라인: seg 와 산출 이미지 수 동일", n_obb == n_seg, f"{n_obb} vs {n_seg}")
+
+
 def test_split_group() -> None:
     """Roboflow 증강 사본이 원본 단위로 묶여 근중복 누수를 막는지."""
     check("split_group: rf 사본은 원본 stem 으로",
@@ -651,6 +716,7 @@ def test_real_pipeline_config() -> None:
         # val 이 없으면 run() 이 SystemExit 로 막으므로, config 부터 걸러낸다
         check(f"{name}: val_ratio > 0 소스 존재",
               any(float(s.get("val_ratio", 0)) > 0 for s in srcs))
+        check(f"{name}: task 유효", st.task in ("seg", "obb"), st.task)
         outs[name] = str(st.cfg.get("out"))
     check("preprocess.*.yaml: out 이 전부 다름",
           len(set(outs.values())) == len(outs), str(outs))
@@ -711,6 +777,7 @@ def main() -> int:
     test_auto_crop_rect()
     test_clip_polygon()
     test_transform_label()
+    test_min_area_rect()
     test_split_group()
 
     root = Path(tempfile.mkdtemp(prefix="finetuner_selftest_"))
@@ -721,6 +788,7 @@ def main() -> int:
         test_pipeline_only(root)
         test_pipeline_incremental(root)
         test_pipeline_three_way(root)
+        test_pipeline_obb(root)
         test_orphan_label_cleanup(root)
         test_no_class_cleanup(root)
         test_preprocess_config_required()
