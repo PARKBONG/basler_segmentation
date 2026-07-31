@@ -32,7 +32,6 @@ preview:
 # (이 프로젝트는 OBB 로 진행). seg = 폴리곤 그대로.
 task: obb
 
-
 out: ../datasets/processed   # 소스별로 out/<이름>/ 에 굽습니다
 
 sources:
@@ -81,4 +80,4 @@ sources:
       enabled: false             # 공개셋은 이미 잘려 있음
     resize: null
 
-# targets: [kimm]   # 여기 적은 소스만 다시 굽기 (다른 소스 산출물은 유지). 평소엔 주석.
+targets: [rf_a]   # 여기 적은 소스만 다시 굽기 (다른 소스 산출물은 유지). 평소엔 주석.
