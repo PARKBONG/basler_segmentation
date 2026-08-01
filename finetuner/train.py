@@ -29,7 +29,9 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from common import Stage
+import yaml
+
+from common import IMG_EXTS, Stage, load_yaml
 
 
 class Trainer(Stage):
@@ -50,11 +52,24 @@ class Trainer(Stage):
     # -- 경로 ------------------------------------------------------------
 
     def data_path(self) -> Path:
-        """데이터셋 정의를 절대경로로 (Ultralytics 의 상대경로 해석 이슈 회피)."""
+        """
+        데이터셋 정의를 절대경로로 (Ultralytics 의 상대경로 해석 이슈 회피).
+
+        두 가지로 적을 수 있습니다:
+            data: ../datasets/processed/rf_a/data.yaml   경로 그대로 (한 소스)
+            data: rf_a, rf_b                             소스 **이름** 목록 → 그 자리에서 통합
+        이름으로 적으면 datasets/processed/<이름>/ 규약으로 코드가 경로를 만듭니다.
+        """
         raw = self.cfg.get("train", {}).get("data")
         if not raw:
             self.fail("train.data 가 없습니다 — 어떤 데이터셋으로 학습할지 기본값으로 "
                       "추측하지 않습니다.")
+        # 경로 구분자나 .yaml 이 없으면 소스 이름 목록으로 본다 (yaml 은 쉼표 나열을
+        # 리스트가 아니라 문자열로 읽으므로 둘 다 받는다).
+        names = raw if isinstance(raw, list) else str(raw).split(",")
+        names = [str(n).strip() for n in names if str(n).strip()]
+        if names and not any(s in n for n in names for s in ("/", "\\", ".yaml")):
+            return self.merged_data_path(names)
         path = self.resolve(raw)
         if not path.exists():
             raise FileNotFoundError(
@@ -63,6 +78,41 @@ class Trainer(Stage):
                 f"데이터셋을 만드세요 (공개셋은 python download.py 선행)."
             )
         return path
+
+    def merged_data_path(self, names: list) -> Path:
+        """
+        소스 이름 목록(`data: rf_a, rf_b`)을 묶은 data.yaml 을 쓰고 그 경로를 준다.
+
+        모양은 preprocess.py 의 통합본과 같습니다 — split 마다 폴더 목록을 주면
+        Ultralytics 가 알아서 합쳐 읽습니다. 소스 조합이 바뀌면 파일도 새로 써집니다.
+        """
+        root = self.resolve("../datasets/processed").resolve()
+        missing = [n for n in names if not (root / n / "data.yaml").exists()]
+        if missing:
+            have = sorted(d.name for d in root.iterdir() if d.is_dir()) if root.is_dir() else []
+            self.fail(f"산출물이 없는 소스: {', '.join(missing)}\n"
+                      f"  {root} 의 소스: {', '.join(have) or '(없음)'}\n"
+                      f"  먼저 python preprocess.py 로 구우세요.")
+
+        def has_images(d: Path) -> bool:
+            return d.is_dir() and any(p.suffix.lower() in IMG_EXTS for p in d.iterdir())
+
+        merged = {"path": str(root)}
+        for split in ("train", "val", "test"):
+            dirs = [f"{n}/images/{split}" for n in names
+                    if has_images(root / n / "images" / split)]
+            if dirs:                       # 비었거나 없는 split 은 키 자체를 넣지 않는다
+                merged[split] = dirs
+        if "train" not in merged:
+            self.fail(f"train 이미지가 있는 소스가 없습니다: {', '.join(names)}")
+        # 클래스 정의는 preprocess 가 소스마다 같은 names 로 굽습니다 — 첫 소스 것을 씁니다.
+        merged["names"] = load_yaml(root / names[0] / "data.yaml")["names"]
+
+        out = root / f"data.{'+'.join(names)}.yaml"
+        with out.open("w", encoding="utf-8") as f:
+            yaml.safe_dump(merged, f, allow_unicode=True, sort_keys=False)
+        self.log(f"소스 {len(names)}개 통합 → {out}")
+        return out
 
     def start_weights(self) -> str:
         """

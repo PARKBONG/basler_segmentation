@@ -33,7 +33,7 @@ from common import INDEX_RE, Stage, load_yaml, normalize_names, roboflow_api_key
 class Downloader(Stage):
     """configs/download.yaml 의 공개 데이터셋을 내려받는 단계."""
 
-    config_glob = "download.yaml"   # 후보가 이 하나뿐 → --config 없이 자동 선택
+    config_glob = "download.yaml"
     label = "download"
 
     @staticmethod

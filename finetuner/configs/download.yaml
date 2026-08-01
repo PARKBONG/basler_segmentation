@@ -26,3 +26,39 @@ sources:
       # (yolov8/yolov9/yolov11 seg export 는 결과가 사실상 동일 — data.yaml +
       #  정규화 폴리곤 txt). 학습 모델은 train.*.yaml 의 train.model 이 정합니다.
       format: yolov11
+
+  # https://app.roboflow.com/waam-syqaj/my-first-project-kmjet-n0ors
+  - name: rf_b
+    path: ../datasets/raw/rf_b
+    roboflow:
+      workspace: waam-syqaj
+      project: my-first-project-kmjet-n0ors
+      version: latest
+      format: yolov11
+
+  # https://app.roboflow.com/waam-syqaj/train-without-boxv1-wf3dn
+  - name: rf_c
+    path: ../datasets/raw/rf_c
+    roboflow:
+      workspace: waam-syqaj
+      project: train-without-boxv1-wf3dn
+      version: latest
+      format: yolov11
+
+  # https://app.roboflow.com/waam-syqaj/gtaw-tig-_front-view-zfqwh
+  - name: rf_d
+    path: ../datasets/raw/rf_d
+    roboflow:
+      workspace: waam-syqaj
+      project: gtaw-tig-_front-view-zfqwh
+      version: latest
+      format: yolov11
+
+  # https://app.roboflow.com/waam-syqaj/final-pcvxo-6po2v
+  - name: rf_e
+    path: ../datasets/raw/rf_e
+    roboflow:
+      workspace: waam-syqaj
+      project: final-pcvxo-6po2v
+      version: latest
+      format: yolov11

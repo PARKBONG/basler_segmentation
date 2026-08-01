@@ -13,7 +13,8 @@ stages:
 
 train:
   model: yolo26s-obb.pt      # COCO 사전학습에서 시작 (없으면 Ultralytics가 자동 다운로드)
-  data: ../datasets/processed/rf_a/data.yaml   # 공개셋만
+  # data: ../datasets/processed/rf_a/data.yaml   # 공개셋만
+  data: rf_a, rf_b, rf_c, rf_d, rf_e   # 공개셋 통합본 (공개셋만)
   epochs: 100
   imgsz: 640                 # 앱이 640으로 추론 → 640 유지
   batch: -1                  # -1 = GPU 메모리에 맞춰 AutoBatch. 정수로 고정 가능

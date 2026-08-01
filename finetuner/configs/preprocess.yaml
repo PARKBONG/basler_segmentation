@@ -17,6 +17,8 @@
 #   crop        이미지+폴리곤 라벨을 함께 크롭 (소스마다 독립, 공유 기본값 없음)
 #   resize      크롭 후 리사이즈. null 이면 그대로 (학습이 imgsz 로 letterbox 함)
 
+targets: [rf_a, rf_b, rf_c, rf_d, rf_e]   # 여기 적은 소스만 다시 굽기 (다른 소스 산출물은 유지). 평소엔 주석.
+
 # 최종 통합 클래스 — index가 최종 class id. class_map의 목적지 이름은 반드시 여기 존재해야 함.
 names:
   0: wire
@@ -66,6 +68,7 @@ sources:
       # 크롭 후 남은 폴리곤 면적/원래 면적이 이 값 미만이면 인스턴스 폐기.
       min_area: 0.10
     resize: null
+    type: obb
 
   # ── 공개 데이터셋 (보조) — download.py(configs/download.yaml)로 먼저 받아두세요 ──
   - name: rf_a
@@ -75,9 +78,65 @@ sources:
       # 나머지는 버립니다. 이름이 다르면 개명해서 통일 (예: cable: wire).
       wire: wire
     val_ratio: 0.1               # stage1(공개 warm-up) 학습의 선택 지표용 공개 val
+    test_ratio: 0.1              # 최종 1회 평가용 공개 test (eval.final.yaml)
     oversample: 1
     crop:
       enabled: false             # 공개셋은 이미 잘려 있음
     resize: null
+    type: seg
 
-targets: [rf_a]   # 여기 적은 소스만 다시 굽기 (다른 소스 산출물은 유지). 평소엔 주석.
+  - name: rf_b
+    path: ../datasets/raw/rf_b # 중복
+    class_map:
+      # 이 소스의 클래스는 [melt pool, seam, torch, wire] — 그중 wire 만 쓰고
+      # 나머지는 버립니다. 이름이 다르면 개명해서 통일 (예: cable: wire).
+      wire: wire
+    val_ratio: 0.1               # stage1(공개 warm-up) 학습의 선택 지표용 공개 val
+    test_ratio: 0.1              # 최종 1회 평가용 공개 test (eval.final.yaml)
+    oversample: 1
+    crop:
+      enabled: false             # 공개셋은 이미 잘려 있음
+    resize: null
+    type: seg
+
+  - name: rf_c
+    path: ../datasets/raw/rf_c # 중복
+    class_map:
+      # 이 소스의 클래스는 [melt pool, seam, torch, wire] — 그중 wire 만 쓰고
+      # 나머지는 버립니다. 이름이 다르면 개명해서 통일 (예: cable: wire).
+      Draht: wire
+    val_ratio: 0.1               # stage1(공개 warm-up) 학습의 선택 지표용 공개 val
+    test_ratio: 0.1              # 최종 1회 평가용 공개 test (eval.final.yaml)
+    oversample: 1
+    crop:
+      enabled: false             # 공개셋은 이미 잘려 있음
+    resize: null
+    type: seg
+
+  - name: rf_d
+    path: ../datasets/raw/rf_d # 중복
+    class_map:
+      # 이 소스의 클래스는 [melt pool, seam, torch, wire] — 그중 wire 만 쓰고
+      # 나머지는 버립니다. 이름이 다르면 개명해서 통일 (예: cable: wire).
+      wire: wire
+    val_ratio: 0.1               # stage1(공개 warm-up) 학습의 선택 지표용 공개 val
+    test_ratio: 0.1              # 최종 1회 평가용 공개 test (eval.final.yaml)
+    oversample: 1
+    crop:
+      enabled: false             # 공개셋은 이미 잘려 있음
+    resize: null
+    type: seg
+
+  - name: rf_e
+    path: ../datasets/raw/rf_e # 중복
+    class_map:
+      # 이 소스의 클래스는 [melt pool, seam, torch, wire] — 그중 wire 만 쓰고
+      # 나머지는 버립니다. 이름이 다르면 개명해서 통일 (예: cable: wire).
+      Wire: wire
+    val_ratio: 0.1               # stage1(공개 warm-up) 학습의 선택 지표용 공개 val
+    test_ratio: 0.1              # 최종 1회 평가용 공개 test (eval.final.yaml)
+    oversample: 1
+    crop:
+      enabled: false             # 공개셋은 이미 잘려 있음
+    resize: null
+    type: seg

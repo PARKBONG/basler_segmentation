@@ -389,7 +389,7 @@ class Preprocessor(Stage):
             if not self.cfg.get(key):
                 self.fail(f"{key} 가 없습니다 — 기본값으로 정하지 않습니다.")
         self.targets = list(self.cfg.get("targets") or [])
-        self.task = str(self.cfg.get("task", "seg"))
+        self.task = str(self.cfg.get("task"))
         if self.task not in ("seg", "obb"):
             self.fail(f"task 는 seg 또는 obb 여야 합니다: {self.task}")
         self.final_names = normalize_names(self.cfg.get("names"))
@@ -545,10 +545,14 @@ class Preprocessor(Stage):
                 rect, lines = cropped
 
                 if self.task == "obb":
-                    lines = self.obb_lines(img, lines, rect, src.get("resize"))
-                    if not lines:
-                        continue          # 변환 가능한 인스턴스가 없으면 이미지째 제외
-
+                    if src["type"] == "seg":
+                        lines = self.obb_lines(img, lines, rect, src.get("resize"))
+                        if not lines:
+                            continue          # 변환 가능한 인스턴스가 없으면 이미지째 제외
+                    elif src["type"] == "obb":
+                        pass  # 이미 OBB 라벨이므로 변환 불필요
+                    else:
+                        self.fail(f"{src['name']}: type 은 seg 또는 obb 여야 합니다: {src['type']}")
                 items.append((img, lines, rect))
                 seen.add(img.name)
 
