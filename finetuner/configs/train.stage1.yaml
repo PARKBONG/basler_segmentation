@@ -23,10 +23,42 @@ train:
   cache: true                # 이미지를 RAM 상주 → epoch 마다 디스크 재읽기 제거(속도↑).
                              #   공개 5000장 ≈ 수~십 GB RAM. 부족하면 disk 로: cache: disk
   patience: 30               # 개선 없는 epoch 수(EarlyStopping)
-  project: runs/obb      # 결과 저장 루트
-  name: stage1               # runs/obb/stage1
+  project: runs/obb          # 결과 저장 루트 (finetuner/ 기준)
+  name: stage1               # 실제 저장 위치: runs/obb/stage1/<YYMMDD_HHMMSS>/
+                             #   실행마다 타임스탬프 폴더가 하나씩 쌓입니다(덮어쓰기 없음).
+                             #   가중치를 가리킬 땐 타임스탬프를 빼고
+                             #   runs/obb/stage1/weights/best.pt 로 적으면 최신 실행을 씁니다.
   optimizer: auto
   lr0: 0.01                  # full 학습 (와이어 특징 습득)
   freeze: 0                  # 전체 학습
   cos_lr: true
   seed: 0
+
+  # ── 증강 (Ultralytics 온라인 증강) ────────────────────────────────────
+  # 아래는 전부 Ultralytics **기본값을 그대로 적어둔 것**입니다 — 적기 전과 동작이
+  # 같습니다. 무엇이 켜져 있는지 config 만 보고 알 수 있게 명시해 둡니다.
+  # 학습 중 매 epoch 새로 적용되므로 디스크에 굽지 않습니다.
+  # 값을 바꾼 뒤 stages.preview_aug: true 로 한 번 돌려 눈으로 확인하세요.
+  hsv_h: 0.015               # 색상 ±비율
+  hsv_s: 0.7                 # 채도
+  hsv_v: 0.6                 # 명도 — 조명이 변하는 현장이면 키울 것
+  degrees: 45.0               # 회전(도). OBB 인데 0 = 회전 증강 없음.
+                             #   와이어 각도 다양성을 데이터로만 커버한다는 뜻이라,
+                             #   각도가 편중돼 있으면 180 까지 올려볼 것
+  translate: 0.1             # 이동 ±비율
+  scale: 0.5                 # 확대/축소 ±비율
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0                # 위아래 뒤집기. 카메라가 고정이면 0
+  fliplr: 0.5                # 좌우 뒤집기 확률
+  bgr: 0.0                   # 채널 순서 뒤집기 확률
+  mosaic: 1.0                # 4장 합성. close_mosaic epoch 남기고 자동 종료
+  close_mosaic: 10           # 마지막 N epoch 은 mosaic 끔
+  mixup: 0.0                 # 두 장 알파 블렌딩
+  cutmix: 0.0                # 두 장 패치 교환
+  copy_paste: 0.0            # seg 전용 — OBB 로 굽는 지금은 효과 없음
+  copy_paste_mode: flip
+  multi_scale: 0.0           # epoch 마다 imgsz 흔들기. 앱이 640 고정이라 0
+  # 아래 둘은 classification 전용이라 OBB 학습에는 적용되지 않습니다 (기록용).
+  auto_augment: randaugment
+  erasing: 0.4

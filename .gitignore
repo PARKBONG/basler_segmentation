@@ -40,6 +40,8 @@ include/pylon/Runtime/x64/DataProcessingPluginsB/
 /datasets/
 # 학습 산출물(체크포인트/로그/plots) + 증강 미리보기(runs/preview)
 /finetuner/runs/
+# 평가 시각화 산출물(eval.py visualize — GT/추론 오버레이 png + summary.txt)
+/finetuner/eval/
 # 다운로드/학습 가중치(base·best·last)
 /finetuner/*.pt
 # 가상환경 (pip 이 만드는 .venv/.gitignore 에만 의존하지 않게 명시)

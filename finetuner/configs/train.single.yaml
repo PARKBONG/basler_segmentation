@@ -20,8 +20,8 @@ train:
   device: "0"                # GPU 인덱스. 예: "0" 또는 "0,1", CPU는 "cpu"
   workers: 8
   patience: 30               # 개선 없는 epoch 수(EarlyStopping)
-  project: runs/obb      # 결과 저장 루트
-  name: yolo26s-obb-finetune # runs/obb/<name>
+  project: runs/obb          # 결과 저장 루트 (finetuner/ 기준)
+  name: yolo26s-obb-finetune # 실제 저장 위치: runs/obb/<name>/<YYMMDD_HHMMSS>/
   resume: false              # true면 마지막 체크포인트에서 이어서
   optimizer: auto
   cos_lr: true

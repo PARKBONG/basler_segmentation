@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -34,6 +35,11 @@ IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 # 분할 그룹핑이 조용히 깨지므로 정의는 여기 한 곳에만 둡니다.
 INDEX_RE = re.compile(r"^\d+__")
 
+# 학습 산출물 폴더 규약:  runs/obb/<name>/<YYMMDD_HHMMSS>/
+# 실행마다 타임스탬프 폴더가 하나씩 쌓이므로 이전 결과를 덮어쓰지 않고, config 의
+# project/name 은 그대로 두어도 됩니다. 정의는 여기 한 곳에만 둡니다.
+RUN_STAMP_RE = re.compile(r"^\d{6}_\d{6}$")
+
 
 def load_yaml(path: Path) -> dict:
     if not path.exists():
@@ -46,6 +52,39 @@ def resolve(path_str) -> Path:
     """finetuner/ 폴더 기준으로 상대경로를 절대경로로 변환."""
     p = Path(path_str)
     return p if p.is_absolute() else (HERE / p)
+
+
+def run_stamp() -> str:
+    """이번 실행의 결과 폴더 이름 (YYMMDD_HHMMSS)."""
+    return datetime.now().strftime("%y%m%d_%H%M%S")
+
+
+def latest_run(root: Path) -> Path | None:
+    """<root>/YYMMDD_HHMMSS 중 가장 최근 것. 하나도 없으면 None."""
+    if not root.is_dir():
+        return None
+    runs = sorted(d for d in root.iterdir() if d.is_dir() and RUN_STAMP_RE.match(d.name))
+    return runs[-1] if runs else None
+
+
+def resolve_weights(path_str) -> Path:
+    """
+    가중치 경로 해석 (finetuner/ 기준).
+
+    학습 결과는 `runs/obb/<name>/<YYMMDD_HHMMSS>/weights/best.pt` 로 쌓이는데, config
+    에 타임스탬프를 매번 손으로 적게 하면 stage2·eval 이 금방 낡습니다. 그래서
+    타임스탬프를 뺀 `runs/obb/<name>/weights/best.pt` 로 적으면 그 name 의 **가장 최근
+    실행**에서 찾아줍니다. 타임스탬프까지 적으면 그 실행을 그대로 씁니다(고정 가능).
+
+    없는 경로는 그대로 돌려줍니다 — 오류 메시지는 호출부가 상황에 맞게 냅니다.
+    """
+    path = resolve(path_str)
+    if path.exists() or path.parent.name != "weights":
+        return path
+    latest = latest_run(path.parent.parent)     # .../<name>/weights/best.pt → .../<name>/
+    if latest is not None and (latest / "weights" / path.name).exists():
+        return latest / "weights" / path.name
+    return path
 
 
 def roboflow_api_key() -> str:
@@ -133,6 +172,10 @@ class Stage:
     @staticmethod
     def resolve(path_str) -> Path:
         return resolve(path_str)
+
+    @staticmethod
+    def resolve_weights(path_str) -> Path:
+        return resolve_weights(path_str)
 
     def log(self, msg: str) -> None:
         print(f"[{self.label}] {msg}")

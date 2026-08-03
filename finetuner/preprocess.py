@@ -545,14 +545,22 @@ class Preprocessor(Stage):
                 rect, lines = cropped
 
                 if self.task == "obb":
-                    if src["type"] == "seg":
+                    # 소스 라벨이 폴리곤(seg)인지 이미 OBB인지는 파일만 보고 구분하기
+                    # 어렵고(둘 다 '클래스 + 좌표 8개'가 될 수 있음) 잘못 넘겨짚으면
+                    # 라벨이 조용히 망가지므로, config 의 type 으로만 판단합니다.
+                    stype = src.get("type")
+                    if stype == "seg":
                         lines = self.obb_lines(img, lines, rect, src.get("resize"))
                         if not lines:
                             continue          # 변환 가능한 인스턴스가 없으면 이미지째 제외
-                    elif src["type"] == "obb":
+                    elif stype == "obb":
                         pass  # 이미 OBB 라벨이므로 변환 불필요
+                    elif stype is None:
+                        self.fail(f"{src['name']}: task: obb 로 구우려면 소스마다 "
+                                  f"type: seg 또는 type: obb 가 필요합니다 "
+                                  f"(원본 라벨이 폴리곤인지 OBB인지 추측하지 않습니다).")
                     else:
-                        self.fail(f"{src['name']}: type 은 seg 또는 obb 여야 합니다: {src['type']}")
+                        self.fail(f"{src['name']}: type 은 seg 또는 obb 여야 합니다: {stype}")
                 items.append((img, lines, rect))
                 seen.add(img.name)
 

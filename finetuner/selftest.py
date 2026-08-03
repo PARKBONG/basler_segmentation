@@ -7,6 +7,8 @@
   3. 폴리곤 클리핑 (clip_polygon)   — 완전 포함 / 완전 배제 / 부분 걸침
   4. 라벨 변환 (transform_label)    — 재정규화 좌표, min_area 폐기, 비폴리곤 폐기
   5. Preprocessor 전체              — 합성 데이터셋으로 소스별 산출물·분할·oversample·크롭
+                                      + 소스 type(seg/obb): obb 소스는 변환 없이 통과,
+                                        task: obb 인데 type 누락·오타면 즉시 오류
                                       + val/test 누수 없음 (그룹 단위 3-way 분할)
                                       + class_map 필터 + 통합/소스별 data.yaml + targets 필터
                                       + 증분 재굽기 + auto_crop 산출물 + val 없으면 오류
@@ -15,6 +17,8 @@
   6. config 규약 (모든 단계)        — 후보 여럿이면 --config 명시 강제(조용한
                                       fallback 금지, 후보 1개면 자동), 저장소 yaml 린트,
                                       데이터/가중치 누락·오타 시 즉시 오류
+  7. 결과 폴더 규약                 — runs/obb/<name>/<YYMMDD_HHMMSS>/ (절대경로로 넘겨
+                                      Ultralytics runs_dir 중첩 방지), 가중치는 최신 실행
 
 필요: pyyaml, pillow  (ultralytics/torch 는 필요 없음)
 
@@ -31,7 +35,7 @@ from pathlib import Path
 import yaml
 from PIL import Image
 
-from common import CONFIG_DIR, HERE
+from common import CONFIG_DIR, HERE, RUN_STAMP_RE, resolve_weights
 from preprocess import (Preprocessor, auto_crop_rect, clip_polygon, convex_hull, crop_rect,
                         label_bbox, min_area_rect, polygon_to_obb,
                         polygon_area, transform_label)
@@ -226,12 +230,14 @@ def run_preprocess(root: Path, out: Path, crop: dict, preview: bool = False,
     # 실제 규약처럼 스테이지 config 하나가 소스별 전처리 전부를 소유한다.
     cfg = {
         "names": {0: "wire"},
+        # type: 원본 라벨 형식(seg/obb) — 합성 라벨은 폴리곤이므로 둘 다 seg.
+        # task: obb 로 구울 때 이 값으로 변환 여부가 갈립니다.
         "sources": [
-            {"name": "kimm", "path": str(root / "kimm"),
+            {"name": "kimm", "path": str(root / "kimm"), "type": "seg",
              "class_map": {"wire": "wire"},
              "val_ratio": 0.2, "test_ratio": test_ratio,
              "oversample": 2, "crop": crop},
-            {"name": "rf_a", "path": str(root / "pub"),
+            {"name": "rf_a", "path": str(root / "pub"), "type": "seg",
              "class_map": {"cable": "wire"}, "val_ratio": 0.0,
              "oversample": 1, "crop": crop},
         ],
@@ -429,11 +435,12 @@ def test_orphan_label_cleanup(root: Path) -> None:
 
     cfg = {
         "names": {0: "wire"},
-        "sources": [{"name": "kimm", "path": str(src),
+        "sources": [{"name": "kimm", "path": str(src), "type": "seg",
                      "class_map": {"wire": "wire"}, "val_ratio": 0.2,
                      "oversample": 1, "crop": {"enabled": False}}],
         "out": str(out),
         "seed": 0,
+        "task": "seg",
         "preview": {"enabled": False, "count": 4},
     }
     cfg_path = root / "preprocess.orphan.yaml"
@@ -472,11 +479,12 @@ def test_no_class_cleanup(root: Path) -> None:
     def write_cfg(fname: str, class_map: dict) -> Path:
         cfg = {
             "names": {0: "wire"},
-            "sources": [{"name": "rf_a", "path": str(src), "class_map": class_map,
-                         "val_ratio": 0.2, "oversample": 1,
+            "sources": [{"name": "rf_a", "path": str(src), "type": "seg",
+                         "class_map": class_map, "val_ratio": 0.2, "oversample": 1,
                          "crop": {"enabled": False}}],
             "out": str(out),
             "seed": 0,
+            "task": "seg",
             "preview": {"enabled": False, "count": 4},
         }
         p = root / fname
@@ -565,6 +573,50 @@ def test_pipeline_obb(root: Path) -> None:
     n_obb = len(list((out / "kimm/images/train").glob("*")))
     n_seg = len(list((seg_out / "kimm/images/train").glob("*")))
     check("obb 파이프라인: seg 와 산출 이미지 수 동일", n_obb == n_seg, f"{n_obb} vs {n_seg}")
+
+
+def test_source_type(root: Path) -> None:
+    """
+    소스의 type(seg/obb) — 원본 라벨 형식은 사용자가 config 에 명시합니다.
+    파일만 보고 구분하기 어렵고(둘 다 '클래스+좌표8개'), 넘겨짚으면 라벨이
+    조용히 망가지므로 task: obb 에서는 없거나 오타면 즉시 멈춰야 합니다.
+    """
+    def obb_lines(i):     # 이미 OBB 형식(꼭지점 4개) 라벨
+        return ["0 0.30 0.30 0.70 0.32 0.68 0.72 0.28 0.70"]
+
+    src = make_source(root / "srcT", "rf_obb", 6, 800, {0: "wire"}, obb_lines)
+
+    def write_cfg(fname: str, stype, task: str = "obb") -> Path:
+        source = {"name": "rf_a", "path": str(src), "class_map": {"wire": "wire"},
+                  "val_ratio": 0.2, "oversample": 1, "crop": {"enabled": False}}
+        if stype is not None:
+            source["type"] = stype
+        cfg = {"names": {0: "wire"}, "sources": [source], "out": str(root / fname),
+               "seed": 0, "task": task, "preview": {"enabled": False, "count": 4}}
+        p = root / (fname + ".yaml")
+        with p.open("w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True)
+        return p
+
+    # type: obb — 이미 OBB 라벨이므로 변환 없이 그대로 나와야 한다
+    stage = Preprocessor(write_cfg("out_type_obb", "obb"))
+    stage.run()
+    check("type: obb 는 변환하지 않음", stage._obb_count == 0, f"{stage._obb_count}")
+    got = sorted((root / "out_type_obb" / "rf_a" / "labels/train").glob("*.txt"))
+    check("type: obb 라벨이 원본 그대로",
+          bool(got) and got[0].read_text(encoding="utf-8").split("\n")[0] == obb_lines(0)[0],
+          got[0].read_text(encoding="utf-8").strip() if got else "(없음)")
+
+    expect_raises("type: 누락이면 SystemExit + 안내", SystemExit,
+                  Preprocessor(write_cfg("out_type_none", None)).run, "type: seg")
+    expect_raises("type: 오타면 SystemExit", SystemExit,
+                  Preprocessor(write_cfg("out_type_typo", "segment")).run,
+                  "seg 또는 obb")
+
+    # task: seg 는 원본 라벨을 그대로 쓰므로 type 없이도 돌아간다 (불필요한 강제 금지)
+    Preprocessor(write_cfg("out_type_segtask", None, task="seg")).run()
+    check("type: task seg 에서는 없어도 통과",
+          any((root / "out_type_segtask" / "rf_a" / "labels/train").glob("*.txt")))
 
 
 def test_split_group() -> None:
@@ -683,11 +735,13 @@ def test_trainer_data_and_weights(root: Path) -> None:
     check("model: 모델 이름은 그대로 통과",
           Trainer(p).start_weights() == "yolo26s-obb.pt")
 
-    # 경로 형태인데 파일이 없으면 오류 (COCO 로 조용히 되돌아가지 않음)
+    # 경로 형태인데 파일이 없으면 오류 (COCO 로 조용히 되돌아가지 않음).
+    # 경로는 임시 폴더 안으로 — 저장소의 runs/ 에 실제 학습 결과가 있으면
+    # 'runs/obb/stage1/...' 은 최신 실행으로 해석돼 존재하게 됩니다.
     p = write_train_cfg(root, "t_badckpt.yaml",
                         {"stages": {"train": True},
                          "train": {"data": "d/data.yaml",
-                                   "model": "runs/obb/stage1/weights/best.pt"}})
+                                   "model": str(root / "nope/weights/best.pt")}})
     expect_raises("model: 없는 checkpoint 는 FileNotFoundError", FileNotFoundError,
                   Trainer(p).start_weights, "시작 가중치가 없습니다")
 
@@ -699,6 +753,52 @@ def test_trainer_data_and_weights(root: Path) -> None:
                         {"stages": {"train": True},
                          "train": {"data": "d/data.yaml", "model": str(ckpt)}})
     check("model: 있는 checkpoint 는 절대경로로", Trainer(p).start_weights() == str(ckpt))
+
+
+def test_trainer_run_dir(root: Path) -> None:
+    """결과 폴더 규약: <project>/<name>/<YYMMDD_HHMMSS>/ + 가중치는 최신 실행."""
+    data = root / "rundir" / "data.yaml"
+    data.parent.mkdir(parents=True, exist_ok=True)
+    data.write_text("names: [a]\n", encoding="utf-8")
+    project = root / "rundir" / "runs" / "obb"
+    p = write_train_cfg(root, "t_rundir.yaml",
+                        {"stages": {"train": True},
+                         "train": {"data": str(data), "model": "yolo26s-obb.pt",
+                                   "project": str(project), "name": "stage1"}})
+    tr = Trainer(p)
+    check("run: <project>/<name> 이 결과 루트", tr.run_root() == project / "stage1",
+          str(tr.run_root()))
+
+    kw = tr.train_kwargs()
+    # project 를 절대경로로 넘겨야 Ultralytics 가 자기 runs_dir 아래에 또 붙이지 않는다
+    # (상대경로면 runs/obb/runs/obb/stage1 처럼 중첩됨).
+    check("run: project 는 절대경로", Path(kw["project"]).is_absolute(), kw["project"])
+    check("run: project = <project>/<name>", kw["project"] == str(project / "stage1"))
+    check("run: name 은 타임스탬프", bool(RUN_STAMP_RE.match(kw["name"])), kw["name"])
+    check("run: model 은 넘기지 않음", "model" not in kw)
+
+    # 실행 폴더가 없으면 루트 아래 경로 그대로 (호출부가 '없습니다' 안내를 낼 수 있게)
+    check("run: 실행 이력 없으면 루트 기준 경로",
+          tr.best_weights() == project / "stage1" / "weights" / "best.pt",
+          str(tr.best_weights()))
+
+    for stamp in ("260101_010101", "260102_235959"):
+        w = project / "stage1" / stamp / "weights"
+        w.mkdir(parents=True, exist_ok=True)
+        (w / "best.pt").write_bytes(b"x")
+    latest = project / "stage1" / "260102_235959" / "weights" / "best.pt"
+    check("run: best_weights 는 가장 최근 실행", tr.best_weights() == latest,
+          str(tr.best_weights()))
+    check("run: 타임스탬프 없는 경로 → 최신 실행",
+          resolve_weights(project / "stage1" / "weights" / "best.pt") == latest)
+    check("run: 타임스탬프까지 적으면 그 실행 고정",
+          resolve_weights(project / "stage1" / "260101_010101" / "weights" / "best.pt")
+          == project / "stage1" / "260101_010101" / "weights" / "best.pt")
+
+    # 이번 실행에서 학습했다면 그 결과 폴더가 우선 (최신 스캔보다 정확)
+    tr._save_dir = project / "stage1" / "260101_010101"
+    check("run: 이번 실행 결과 폴더가 우선",
+          tr.best_weights() == project / "stage1" / "260101_010101" / "weights" / "best.pt")
 
 
 def test_preprocess_config_auto() -> None:
@@ -724,6 +824,10 @@ def test_real_pipeline_config() -> None:
     # 모든 소스가 val 을 가져야 한다 (없으면 그 소스로 학습 시 빈 val 로 죽음)
     no_val = [s["name"] for s in srcs if not float(s.get("val_ratio", 0)) > 0]
     check("preprocess.yaml: 모든 소스 val_ratio > 0", not no_val, str(no_val))
+    # 원본 라벨 형식은 소스마다 사용자가 명시 — task: obb 로 구울 때 변환 여부가 갈립니다.
+    bad_type = [f"{s['name']}={s.get('type')}" for s in srcs
+                if s.get("type") not in ("seg", "obb")]
+    check("preprocess.yaml: 모든 소스 type 이 seg/obb", not bad_type, str(bad_type))
 
     # download.py 쪽 규약 — 내려받을 소스는 workspace/project 가 있어야 함
     all_sources = yaml.safe_load(
@@ -790,6 +894,7 @@ def main() -> int:
         test_pipeline_incremental(root)
         test_pipeline_three_way(root)
         test_pipeline_obb(root)
+        test_source_type(root)
         test_orphan_label_cleanup(root)
         test_no_class_cleanup(root)
         test_preprocess_config_auto()
@@ -798,6 +903,7 @@ def main() -> int:
         test_trainer_config_required(root)
         test_trainer_stages_guard(root)
         test_trainer_data_and_weights(root)
+        test_trainer_run_dir(root)
         test_real_train_configs()
     finally:
         shutil.rmtree(root, ignore_errors=True)

@@ -31,7 +31,7 @@ from pathlib import Path
 
 import yaml
 
-from common import IMG_EXTS, Stage, load_yaml
+from common import IMG_EXTS, Stage, latest_run, load_yaml, run_stamp
 
 
 class Trainer(Stage):
@@ -129,7 +129,8 @@ class Trainer(Stage):
                       "않습니다 (예: yolo26s-obb.pt 또는 runs/obb/stage1/weights/best.pt).")
         if "/" not in model and "\\" not in model:
             return model                      # Ultralytics 가 이름으로 해석/다운로드
-        path = self.resolve(model)
+        # 타임스탬프를 뺀 runs/obb/stage1/weights/best.pt 로 적으면 stage1 의 최신 실행
+        path = self.resolve_weights(model)
         if not path.exists():
             raise FileNotFoundError(
                 f"시작 가중치가 없습니다: {path}\n"
@@ -138,14 +139,26 @@ class Trainer(Stage):
             )
         return str(path)
 
+    def run_root(self) -> Path:
+        """
+        이 config 의 결과가 쌓이는 폴더: `<project>/<name>/` (그 아래 실행별 타임스탬프).
+
+        project 는 **절대경로로 바꿔서** Ultralytics 에 넘깁니다. 상대경로로 주면
+        Ultralytics 가 자기 설정의 runs_dir 아래에 다시 붙여(`runs/obb/runs/obb/…`)
+        경로가 중첩됩니다.
+        """
+        train_cfg = self.cfg.get("train", {})
+        return (self.resolve(train_cfg.get("project", "runs/obb"))
+                / str(train_cfg.get("name", "yolo26s-obb-finetune")))
+
     def best_weights(self) -> Path:
-        """best.pt 위치. 이번 실행에서 학습했다면 그 결과 폴더를, 아니면 config 로 유도."""
+        """best.pt 위치. 이번 실행에서 학습했다면 그 결과 폴더를, 아니면 가장 최근 실행."""
         if self._save_dir is not None:
             return self._save_dir / "weights" / "best.pt"
-        train_cfg = self.cfg.get("train", {})
-        project = self.resolve(train_cfg.get("project", "runs/obb"))
-        name = train_cfg.get("name", "yolo26s-obb-finetune")
-        return project / name / "weights" / "best.pt"
+        root = self.run_root()
+        latest = latest_run(root)
+        # 실행 폴더가 하나도 없으면 없는 경로를 그대로 — 호출부가 안내 메시지를 냅니다.
+        return (latest or root) / "weights" / "best.pt"
 
     # -- 단계 ------------------------------------------------------------
 
@@ -184,14 +197,27 @@ class Trainer(Stage):
         self.log("train_batch*.jpg = 학습이 실제로 먹는 배치(mosaic·hsv·flip·scale 반영).")
         return save_dir
 
-    def train(self) -> Path:
-        """파인튜닝. best.pt 경로를 돌려준다."""
+    def train_kwargs(self) -> dict:
+        """
+        Ultralytics train() 에 넘길 인자. config 의 train 블록에서 model 만 빼고,
+        데이터셋 경로와 결과 폴더를 확정한 것입니다 (무거운 import 없이 검증 가능).
+        """
         cfg = dict(self.cfg.get("train", {}))
-        weights = self.start_weights()      # 설정 검증을 무거운 import 앞에 둔다
         cfg.pop("model", None)
         cfg["data"] = str(self.data_path())
+        # 결과는 <project>/<name>/<YYMMDD_HHMMSS>/ 로 — 실행마다 폴더가 하나씩 쌓이므로
+        # 이전 결과를 덮어쓰지도(exist_ok), stage12/stage13 으로 늘어나지도 않습니다.
+        cfg["project"] = str(self.run_root())
+        cfg["name"] = run_stamp()
+        return cfg
+
+    def train(self) -> Path:
+        """파인튜닝. best.pt 경로를 돌려준다."""
+        weights = self.start_weights()      # 설정 검증을 무거운 import 앞에 둔다
+        cfg = self.train_kwargs()
         self.log(f"시작 가중치: {weights}")
         self.log(f"데이터셋: {cfg['data']}")
+        self.log(f"결과 폴더: {Path(cfg['project']) / cfg['name']}")
 
         from ultralytics import YOLO
 
@@ -214,7 +240,8 @@ class Trainer(Stage):
         if not weights.exists():
             raise FileNotFoundError(
                 f"가중치를 찾을 수 없습니다: {weights}\n"
-                f"학습을 먼저 끝내거나 train.*.yaml 의 train.project/name 을 확인하세요."
+                f"학습을 먼저 끝내거나 train.*.yaml 의 train.project/name 을 확인하세요.\n"
+                f"(export 만 돌리면 {self.run_root()} 의 가장 최근 실행에서 찾습니다.)"
             )
         self.log(f"가중치: {weights}")
 
