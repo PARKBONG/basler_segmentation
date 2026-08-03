@@ -20,7 +20,7 @@ stages:
   export: true
 
 train:
-  model: runs/obb/stage1/weights/best.pt   # ← Stage1 checkpoint (직접 지정)
+  model: runs/obb/stage1/260802_044744weights/best.pt   # ← Stage1 checkpoint (직접 지정)
   data: ../datasets/processed/kimm/data.yaml   # in-domain 만
   epochs: 60
   imgsz: 640

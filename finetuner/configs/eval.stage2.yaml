@@ -9,10 +9,15 @@ split: val
 imgsz: 640
 device: "0"
 
-# 추론 결과를 이미지에 그려 저장 (초록 = 원본 라벨, 빨강 = 추론).
+# 추론 결과를 이미지에 그려 저장 — 초록 = 원본 라벨(GT), 빨강 = 추론.
+# 단일 클래스라 클래스명·점수 글자는 적지 않습니다 (색이 곧 의미).
 #   finetuner/eval/<YYMMDD_HHMMSS>__<가중치>__<데이터셋>-<split>/  (summary.txt 에 출처)
+#   val 결과 폴더(runs/obb/val*)에도 격자로 묶은 val_batch*_overlay.jpg 를 남기고,
+#   정답/추론을 따로 그린 Ultralytics 기본 val_batch*_labels/_pred.jpg 는 지웁니다.
 visualize:
   enabled: true
   count: 20        # 균등 간격으로 뽑을 장수. 0 이면 split 전체
   conf: 0.25       # 이 점수 미만 예측은 그리지 않음
+  baseline: true   # 박스 아래 두 꼭짓점의 y 평균 높이에 가로 점선 + y 픽셀값 표기
+                   # (왼쪽 값 = GT, 오른쪽 값 = 추론. y 는 processed 이미지 기준)
   out: eval        # finetuner/ 기준
