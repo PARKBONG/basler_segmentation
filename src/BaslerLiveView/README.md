@@ -19,7 +19,7 @@ CTWD(contact tip to work distance) 측정에 쓰는 앱.
 
 ```
 VisionCam.connect()
-  → Open + ROI(640×640 중앙) + Mono8 + 노출/fps + YOLO 세션
+  → Open + ROI(640×640, 위치 0-100%) + 픽셀 포맷 + 노출/fps + YOLO 세션
   → StreamGrabber.Start(LatestImages, ProvidedByUser)   // 출력 큐 1개 = 최신만 유지
 
 펌프 루프 (앱 소유, 백그라운드 태스크 1개)
@@ -36,11 +36,21 @@ VisionCam.connect()
 - **ROI 기본값 640×640** 은 세그 모델 입력과 같습니다. 리사이즈가 일어나지 않으므로 bbox 좌표가
   센서 픽셀과 1:1 이고 되돌릴 스케일이 없습니다. ROI 를 넓히면 리사이즈가 다시 생기고
   픽셀→mm 캘리브레이션도 다시 잡아야 합니다. `0` 을 주면 센서 전체를 씁니다.
+- **크롭 위치는 `roiXPercent` / `roiYPercent` (0–100)** 로 정합니다. `0` = 좌/상단 끝,
+  `50`(기본) = 중앙, `100` = 우/하단 끝. 센서에서 창이 움직일 수 있는 전체 구간
+  (`OffsetX/Y` 의 max = 센서 − ROI) 을 백분율로 나눈 위치이며, 카메라 increment 에 맞춰
+  내림 정렬합니다. 센서 전체를 쓸 때는 움직일 여지가 없으므로 무시됩니다.
+- **픽셀 포맷 기본값은 카메라(pylon) 기본값** 입니다. `pixelFormat: null`(기본) 이면 노드를
+  건드리지 않고, `"Mono8"`·`"BayerRG8"` 처럼 문자열을 주면 그 포맷을 요청합니다. 어떤 포맷이든
+  `Frame.Gray` 로 나갈 때 Mono8 로 변환되므로 이 값은 링크 대역폭만 바꾸고 데이터 계약은
+  그대로입니다. 카메라가 거부하는 포맷은 무시되고 기본값이 유지됩니다.
 
 ## 사용
 
 ```csharp
-using var cam = new VisionCam(fps: 20, segmentation: true);   // roiWidth/roiHeight 기본 640
+// roiWidth/roiHeight 기본 640, 크롭 위치 기본 중앙(50%), 픽셀 포맷은 카메라 기본값
+using var cam = new VisionCam(fps: 20, segmentation: true,
+                              roiXPercent: 50, roiYPercent: 50, pixelFormat: null);
 cam.connect();                       // 시리얼을 주면 특정 카메라 선택
 
 while (running)

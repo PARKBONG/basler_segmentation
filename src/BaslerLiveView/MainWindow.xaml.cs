@@ -23,8 +23,11 @@ public partial class MainWindow : Window
     // a control for "disconnect, edit, reconnect".
     private const float Fps = 20;
     private const bool Segmentation = true;
-    private const int RoiWidth = 640;   // matches the model input → no resize, boxes are sensor pixels
-    private const int RoiHeight = 640;
+    private const int RoiWidth = 0;   // matches the model input → no resize, boxes are sensor pixels
+    private const int RoiHeight = 0; // 0 = full sensor, otherwise the model input size (e.g. 640×480)
+    private const double RoiXPercent = 50;  // 0 = left edge, 50 = centered, 100 = right edge
+    private const double RoiYPercent = 50;  // 0 = top edge, 50 = centered, 100 = bottom edge
+    private const string? PixelFormat = null;   // null = whatever the camera defaults to
 
     private VisionCam? _cam;
 
@@ -46,7 +49,8 @@ public partial class MainWindow : Window
     {
         try
         {
-            _cam = new VisionCam(Fps, Segmentation, RoiWidth, RoiHeight);
+            _cam = new VisionCam(Fps, Segmentation, RoiWidth, RoiHeight,
+                                 RoiXPercent, RoiYPercent, PixelFormat);
             // Model load + DirectML init blocks for a second or two on the first connect.
             _cam.connect();
 
@@ -138,8 +142,6 @@ public partial class MainWindow : Window
         _bitmap.WritePixels(new Int32Rect(0, 0, frame.Width, frame.Height),
                             frame.Gray, frame.Width, 0);
 
-        DrawOverlay(frame);
-
         _dropped += frame.Skipped;
         _frames++;
         if (_fpsClock.ElapsedMilliseconds >= 500)
@@ -148,40 +150,6 @@ public partial class MainWindow : Window
             RateText.Text = $"{fps:F1} fps   {frame.Width}×{frame.Height}   dropped {_dropped}";
             _frames = 0;
             _fpsClock.Restart();
-        }
-    }
-
-    // Vector boxes rather than pixels burnt into the image: nothing to composite per
-    // frame, labels stay legible at any zoom, and the camera class never has to know
-    // what the overlay looks like.
-    private void DrawOverlay(Frame frame)
-    {
-        Overlay.Children.Clear();
-
-        foreach (var instance in frame.Instances)
-        {
-            var box = new Rectangle
-            {
-                Width = Math.Max(1, instance.Box.Width),
-                Height = Math.Max(1, instance.Box.Height),
-                Stroke = Brushes.Lime,
-                StrokeThickness = 2,
-            };
-            Canvas.SetLeft(box, instance.Box.X);
-            Canvas.SetTop(box, instance.Box.Y);
-            Overlay.Children.Add(box);
-
-            var label = new TextBlock
-            {
-                Text = $"{instance.Label} {instance.Confidence:P0}",
-                Foreground = Brushes.Black,
-                Background = Brushes.Lime,
-                FontSize = 12,
-                Padding = new Thickness(3, 0, 3, 0),
-            };
-            Canvas.SetLeft(label, instance.Box.X);
-            Canvas.SetTop(label, Math.Max(0, instance.Box.Y - 15));
-            Overlay.Children.Add(label);
         }
     }
 

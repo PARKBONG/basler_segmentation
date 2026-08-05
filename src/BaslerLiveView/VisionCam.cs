@@ -5,11 +5,6 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using Basler.Pylon;
-using SkiaSharp;
-using YoloDotNet;
-using YoloDotNet.Enums;
-using YoloDotNet.ExecutionProvider.DirectML;
-using YoloDotNet.Models;
 
 namespace BaslerLiveView;
 
@@ -43,11 +38,13 @@ public sealed class VisionCam : IDisposable
     private readonly bool _segmentation;
     private readonly int _roiW;
     private readonly int _roiH;
+    private readonly double _roiXPercent;
+    private readonly double _roiYPercent;
+    private readonly string? _pixelFormat;
     private readonly string _modelPath;
     private readonly int _gpuId;
 
     private Camera? _camera;
-    private Yolo? _yolo;
 
     // Whatever the sensor delivers (Mono8, Bayer, YUV, ...) is normalised to packed
     // Mono8. Buffers are reused across frames; only the per-frame Frame.Gray is fresh.
@@ -65,6 +62,14 @@ public sealed class VisionCam : IDisposable
     /// <param name="segmentation">Run YOLO on every grabbed frame.</param>
     /// <param name="roiWidth">Hardware ROI width; 0 = full sensor.</param>
     /// <param name="roiHeight">Hardware ROI height; 0 = full sensor.</param>
+    /// <param name="roiXPercent">Horizontal position of the crop within the sensor:
+    /// 0 = flush left, 50 = centered, 100 = flush right. Ignored at full sensor size.</param>
+    /// <param name="roiYPercent">Vertical position of the crop: 0 = top, 50 = centered,
+    /// 100 = bottom. Ignored at full sensor size.</param>
+    /// <param name="pixelFormat">Sensor pixel format to request, e.g. "Mono8" or
+    /// "BayerRG8". null (the default) leaves the camera's own default untouched —
+    /// whatever it delivers is normalised to Mono8 in <see cref="Compose"/> anyway, so
+    /// this only trades link bandwidth, never the shape of <see cref="Frame.Gray"/>.</param>
     /// <param name="modelPath">ONNX model; defaults to Models\yolo26s-seg.onnx beside the exe.</param>
     /// <param name="gpuId">DirectML device id, or -1 for CPU.</param>
     /// <remarks>The ROI defaults to the model's 640×640 input on purpose: grabbing at
@@ -73,14 +78,23 @@ public sealed class VisionCam : IDisposable
     /// a resize — and with it a pixel-to-millimetre scale that must be recalibrated.</remarks>
     public VisionCam(float fps, bool segmentation,
                      int roiWidth = 640, int roiHeight = 640,
+                     double roiXPercent = 50, double roiYPercent = 50,
+                     string? pixelFormat = null,
                      string? modelPath = null, int gpuId = 0)
     {
         if (fps <= 0) throw new ArgumentOutOfRangeException(nameof(fps), "fps must be > 0.");
+        if (roiXPercent is < 0 or > 100)
+            throw new ArgumentOutOfRangeException(nameof(roiXPercent), "must be 0–100.");
+        if (roiYPercent is < 0 or > 100)
+            throw new ArgumentOutOfRangeException(nameof(roiYPercent), "must be 0–100.");
 
         _fps = fps;
         _segmentation = segmentation;
         _roiW = roiWidth;
         _roiH = roiHeight;
+        _roiXPercent = roiXPercent;
+        _roiYPercent = roiYPercent;
+        _pixelFormat = pixelFormat;
         _gpuId = gpuId;
         _modelPath = modelPath ?? Path.Combine(AppContext.BaseDirectory, "Models", "yolo26s-seg.onnx");
     }
@@ -118,9 +132,6 @@ public sealed class VisionCam : IDisposable
         camera.Open();
 
         ConfigureAcquisition();
-
-        if (_segmentation)
-            _yolo ??= CreateYolo();
 
         // "Latest images" with a one-deep output queue and two buffers is pylon's
         // documented way to say latest-image-only: anything the consumer is too slow
@@ -186,8 +197,6 @@ public sealed class VisionCam : IDisposable
     public void Dispose()
     {
         disconnect();
-        _yolo?.Dispose();
-        _yolo = null;
         _toMono.Dispose();
     }
 
@@ -202,10 +211,14 @@ public sealed class VisionCam : IDisposable
 
         SetRoi(_roiW, _roiH);
 
-        // Mono8 straight off the sensor: one byte per pixel, no debayering, and a
-        // quarter of the bandwidth of BGRA. Colour cameras that refuse it are handled
-        // by the converter in Compose() instead.
-        Try(() => p[PLCamera.PixelFormat].SetValue("Mono8"));
+        // No pixel format asked for means the camera keeps its own default — the format
+        // pylon's viewer would show, which is the one a user has already tuned the device
+        // for. Whatever it is, Compose() normalises it to Mono8, so this choice only
+        // costs link bandwidth (e.g. Mono8 is a quarter of BGRA) and never changes the
+        // Frame contract. Colour cameras that refuse an explicit request keep their
+        // default rather than failing the connect.
+        if (_pixelFormat != null)
+            Try(() => p[PLCamera.PixelFormat].SetValue(_pixelFormat));
 
         double periodUs = 1_000_000.0 / _fps;
         Try(() => p[PLCamera.ExposureAuto].SetValue("Off"));
@@ -221,9 +234,10 @@ public sealed class VisionCam : IDisposable
         catch { /* not a GigE device, or the node is unavailable */ }
     }
 
-    /// <summary>Apply the centered hardware ROI. A size of 0 means "full sensor" —
-    /// which still writes the nodes, restoring the maximum, because the camera persists
-    /// the ROI from the previous session and would otherwise keep the old crop.</summary>
+    /// <summary>Apply the hardware ROI at the requested position. A size of 0 means
+    /// "full sensor" — which still writes the nodes, restoring the maximum, because the
+    /// camera persists the ROI from the previous session and would otherwise keep the
+    /// old crop.</summary>
     private void SetRoi(int targetW, int targetH)
     {
         var p = _camera!.Parameters;
@@ -253,14 +267,20 @@ public sealed class VisionCam : IDisposable
             wNode.SetValue(Align(reqW, wNode.GetIncrement(), wNode.GetMinimum(), wNode.GetMaximum()));
             hNode.SetValue(Align(reqH, hNode.GetIncrement(), hNode.GetMinimum(), hNode.GetMaximum()));
 
-            if (full) return; // at full size there is no travel left to center within
+            if (full) return; // at full size there is no travel left to position within
 
-            // With the size set, OffsetX/Y max == sensor − size, i.e. the full travel;
-            // half of it puts the window in the middle of the sensor.
-            Try(() => oxNode.SetValue(Align(oxNode.GetMaximum() / 2, oxNode.GetIncrement(),
-                                            oxNode.GetMinimum(), oxNode.GetMaximum())));
-            Try(() => oyNode.SetValue(Align(oyNode.GetMaximum() / 2, oyNode.GetIncrement(),
-                                            oyNode.GetMinimum(), oyNode.GetMaximum())));
+            // With the size set, OffsetX/Y max == sensor − size, i.e. the full travel the
+            // window can slide over; the percentage picks a point along it. 0 % parks it
+            // against the left/top edge, 100 % against the right/bottom, 50 % centers it.
+            static long Position(IIntegerParameter node, double percent)
+            {
+                long min = node.GetMinimum(), max = node.GetMaximum();
+                long v = min + (long)Math.Round((max - min) * percent / 100.0);
+                return Align(v, node.GetIncrement(), min, max);
+            }
+
+            Try(() => oxNode.SetValue(Position(oxNode, _roiXPercent)));
+            Try(() => oyNode.SetValue(Position(oyNode, _roiYPercent)));
         }
         catch (Exception ex)
         {
@@ -310,59 +330,7 @@ public sealed class VisionCam : IDisposable
             ? result.Timestamp / _ticksPerSecond
             : _hostClock.Elapsed.TotalSeconds;
 
-        IReadOnlyList<Instance> instances = _segmentation && _yolo != null
-            ? Detect(w, h, count)
-            : Array.Empty<Instance>();
-
-        return new Frame((long)result.BlockID, result.SkippedImageCount, ts, w, h, gray, instances);
-    }
-
-    private IReadOnlyList<Instance> Detect(int w, int h, int count)
-    {
-        // YoloDotNet's preprocessing path expects a colour bitmap, so widen Mono8 to
-        // BGRA. Roughly a megabyte of straight-line writes — negligible next to inference.
-        int bytes = count * 4;
-        if (_bgra.Length < bytes) _bgra = new byte[bytes];
-        for (int i = 0, j = 0; i < count; i++, j += 4)
-        {
-            byte v = _mono[i];
-            _bgra[j] = v;
-            _bgra[j + 1] = v;
-            _bgra[j + 2] = v;
-            _bgra[j + 3] = 255;
-        }
-
-        var info = new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Unpremul);
-        using var bitmap = new SKBitmap(info);
-        Marshal.Copy(_bgra, 0, bitmap.GetPixels(), bytes);
-
-        var results = _yolo!.RunSegmentation(bitmap, confidence: 0.24, pixelConfedence: 0.5, iou: 0.7);
-
-        var instances = new List<Instance>(results.Count);
-        foreach (var r in results)
-        {
-            var b = r.BoundingBox;
-            instances.Add(new Instance(r.Label.Index, r.Label.Name, r.Confidence,
-                                       new BBox(b.Left, b.Top, b.Width, b.Height)));
-        }
-        return instances;
-    }
-
-    private Yolo CreateYolo()
-    {
-        if (!File.Exists(_modelPath))
-            throw new FileNotFoundException($"Segmentation model not found: {_modelPath}", _modelPath);
-
-        return new Yolo(new YoloOptions
-        {
-            ExecutionProvider = new DirectMLExecutionProvider(_modelPath, _gpuId),
-            // Proportional (letterbox), never stretched: stretching scales x and y
-            // differently, which would make a pixel distance mean different real
-            // distances depending on direction — fatal for a geometric measurement.
-            // At the default ROI the frame already matches the input, so nothing resizes.
-            ImageResize = ImageResize.Proportional,
-            SamplingOptions = new(SKFilterMode.Nearest, SKMipmapMode.None),
-        });
+        return new Frame((long)result.BlockID, result.SkippedImageCount, ts, w, h, gray);
     }
 }
 
@@ -388,13 +356,8 @@ public sealed record Frame(
     double TimestampSec,
     int Width,
     int Height,
-    byte[,] Gray,
-    IReadOnlyList<Instance> Instances);
+    byte[,] Gray);
 
-/// <summary>A single detected object. Geometry is in sensor pixel coordinates — the
-/// ROI is grabbed at the model's input size, so no resampling happens and the box
-/// needs no back-mapping.</summary>
-public sealed record Instance(int ClassId, string Label, double Confidence, BBox Box);
 
 /// <summary>Axis-aligned box in pixel coordinates. Deliberately not SkiaSharp's
 /// SKRectI, so the inference library stays behind <see cref="VisionCam"/>.</summary>
