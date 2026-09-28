@@ -113,6 +113,27 @@ def smooth_contours(mask: np.ndarray, sigma: float) -> list[np.ndarray]:
     return out
 
 
+def draw_dashed_poly(img: np.ndarray, pts: np.ndarray, color, thickness: int,
+                     dash: int = 28, gap: int = 18) -> None:
+    """닫힌 다각형을 대시(점선)로 그린다. OpenCV 에는 점선 프리미티브가 없어서
+    각 변을 따라 dash/gap 길이만큼 끊어 가며 짧은 선분을 잇는다."""
+    n = len(pts)
+    for i in range(n):
+        p0 = np.asarray(pts[i], np.float64)
+        p1 = np.asarray(pts[(i + 1) % n], np.float64)
+        seg = p1 - p0
+        length = float(np.hypot(*seg))
+        if length < 1e-6:
+            continue
+        d = seg / length
+        pos = 0.0
+        while pos < length:
+            q0 = (p0 + d * pos).round().astype(int)
+            q1 = (p0 + d * min(pos + dash, length)).round().astype(int)
+            cv2.line(img, tuple(q0), tuple(q1), color, thickness, cv2.LINE_AA)
+            pos += dash + gap
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--src", default=str(REPO / "datasets" / "reference.png"))
@@ -206,11 +227,35 @@ def main() -> None:
         # 정확한 실루엣보다 "이 영역 어딘가" 를 나타내는 박스가 알아보기 쉽다.
         tube_contours = smooth_contours(tube_rough, args.contour_sigma)
         cv2.drawContours(outline_canvas, tube_contours, -1, green, args.line, lineType=cv2.LINE_AA)
-        pts = cv2.findNonZero(wire_rough)
+        # OBB 는 튜브 실루엣(초록 선) 바깥에 실제로 보이는 와이어 픽셀만으로
+        # 계산한다. 레이어에는 튜브 뒤로 이어지는 윗부분까지 그려져 있어서,
+        # 전체 픽셀로 박스를 잡으면 위 변이 초록 선을 뚫고 올라간다. 가리는
+        # 영역은 스무딩된 튜브 윤곽을 다시 채워 초록 선과 정확히 일치시킨다.
+        tube_fill = np.zeros((h + 2 * PAD, w + 2 * PAD), np.uint8)
+        cv2.fillPoly(tube_fill, tube_contours, 255)
+        wire_visible = cv2.bitwise_and(wire_rough, cv2.bitwise_not(tube_fill[PAD:PAD + h, PAD:PAD + w]))
+        pts = cv2.findNonZero(wire_visible)
         if pts is None:
-            raise SystemExit(f"와이어 레이어가 비어 있음: {args.wire}")
-        box = cv2.boxPoints(cv2.minAreaRect(pts)).round().astype(np.int32) + PAD
-        cv2.polylines(outline_canvas, [box], True, red, args.line, lineType=cv2.LINE_AA)
+            raise SystemExit(f"튜브 밖에 보이는 와이어 픽셀이 없음: {args.wire}")
+        box = cv2.boxPoints(cv2.minAreaRect(pts)).astype(np.float64) + PAD
+
+        # 박스를 와이어 축 방향(기울기 유지)으로 이미지 바닥 밖까지 연장한다.
+        # 와이어는 길이가 변하는 부품이라 기준 길이에서 멈추기보다 "이 축을 따라
+        # 내려온다" 는 가이드 레일이 맞다. 아래 변은 캔버스 밖으로 밀려나 크롭에서
+        # 사라지고, 양쪽 레일만 프레임 끝까지 남는다. 전체는 대시로 그린다.
+        e01 = box[1] - box[0]
+        e12 = box[2] - box[1]
+        axis = e01 if np.hypot(*e01) >= np.hypot(*e12) else e12  # 긴 변 = 와이어 축
+        axis = axis / np.hypot(*axis)
+        if axis[1] < 0:
+            axis = -axis                              # 아래(y+) 방향으로 통일
+        if axis[1] > 1e-6:                            # 수평에 가까우면 연장 불가 → 그대로
+            proj = box @ axis
+            target_y = h + 2 * PAD                    # 캔버스 바닥 밖 → 아래 변은 잘림
+            for i in np.argsort(proj)[2:]:            # 축 투영이 큰 두 점 = 아래 꼭짓점
+                t = (target_y - box[i][1]) / axis[1]
+                box[i] += axis * max(t, 0.0)
+        draw_dashed_poly(outline_canvas, box, red, args.line)
     else:
         cv2.drawContours(outline_canvas, contours, -1, green, args.line, lineType=cv2.LINE_AA)
     outline = outline_canvas[PAD:PAD + h, PAD:PAD + w]
