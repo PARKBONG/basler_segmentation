@@ -1,0 +1,13 @@
+# changelog — worktree-cached-tumbling-mountain
+# 이 워크트리 세션에서 수행한 작업 요약 (merge 시 참고용)
+
+2026-08-01  download: Roboflow train/valid/test 분할을 받은 직후 kimm처럼 images/+labels/ 한 덩어리로 합침 (merge_splits, data.yaml → train: images). 분할은 preprocess가 담당. [41cf914, train에 merge+push됨]
+2026-08-01  download: raw 파일명 앞에 0000__ 인덱스 접두어 부여 (index_files, 멱등). preprocess.split_group은 접두어 벗기고 그룹핑 → .rf. 증강 사본 누수 방지 유지. selftest 케이스 추가. [39449af, train에 merge됨, push 안 함]
+2026-08-01  기존 datasets/raw/rf_a 41장을 일회성으로 flat+인덱스 구조로 변환 (git 무관, datasets는 gitignore).
+2026-08-01  download 인덱스 4→6자리(000000__). FrameRecorder: REC 시작마다 datasets/raw/kimm_YYMMDD_HHMMSS/images/ 세션 폴더 생성, 파일명 {D6}__cap_<세션>.png. preprocess.split_group은 .rf. 사본에서만 접두어 벗김(캡처는 stem 전체가 그룹). config.xml Directory → datasets/raw. [89be71e + train(config 통합) merge]
+2026-08-01  finetuner 가벼운 표준화: yaml 4개를 configs/로 분리(download_config.yaml → configs/pipeline.yaml), Stage가 configs/에서 config 탐색(--config는 파일명/경로 둘 다 허용), download.py에 main+argparse, eval.py ultralytics 지연 import, .gitignore에 /finetuner/.venv/ 추가, requirements python-dotenv 제거, todo 완료항목 정리, README·config.xml 참조 갱신. selftest 105 PASS.
+2026-08-01  CLI 통일: 모든 스크립트 인자는 --config 하나 (후보 1개면 인자 없이 자동 선택). --stage/--only/eval 인자들을 config로 이동 — configs/preprocess.{single,stage1,stage2}.yaml (pipeline.yaml의 stages: 분리, pipeline: 키로 소스 공유), train_config*.yaml → train.*.yaml, eval.{single,stage1,stage2,final}.yaml 신설(Evaluator Stage화). selftest 110 PASS.
+2026-08-01  download/preprocess 설정 완전 분리: pipeline.yaml → download.yaml(다운로드 전용, path+roboflow만), 전처리 전부(names/seed/preview/소스별 class_map·crop·비율)를 각 preprocess.*.yaml이 자급자족 소유(pipeline: 참조 제거, use 병합 제거 — 스테이지·소스별로 다르게 적용 가능). 두 쪽의 유일한 계약은 datasets/raw/<이름>/ 경로 — selftest가 path 일치 검사. 117 PASS.
+2026-08-01  에이전트 작업 규칙(finetuner/README_Claude.txt)을 저장소 루트 CLAUDE.md로 명문화 — 모든 세션이 시작 시 자동으로 읽음.
+2026-08-01  preprocess에 task: obb 추가 — seg 폴리곤을 크롭·클리핑 후 최종 픽셀 공간에서 최소 면적 회전 사각형(convex hull + rotating calipers, 순수 파이썬)으로 피팅해 YOLO OBB 라벨(cls+꼭지점4개)로 변환. 피팅 품질(면적비) 로그 + 0.5 미만 경고. preprocess.*.yaml 3개 모두 task: obb 설정(프로젝트 OBB 전환). selftest 기하·파이프라인 테스트 추가, ALL PASS. train/eval의 OBB 모델 전환은 후속 작업.
+2026-08-01  train/eval을 OBB로 전환 — 시작 가중치 yolo26s-seg.pt → yolo26s-obb.pt(공식 에셋 확인), 결과 폴더 runs/segment → runs/obb, 단일 run명 yolo26s-obb-finetune, deploy onnx yolo26s-obb.onnx. eval.py는 OBBMetrics가 .box를 제공해 무수정 호환(Mask 줄만 자동 생략). 앱(YoloDotNet)은 RunObbDetection 지원 확인 — 전환은 별도 작업.

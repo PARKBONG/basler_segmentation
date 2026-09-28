@@ -1,24 +1,27 @@
-# yolo26s-seg 파인튜닝 + export 설정 — train.py 전용.
-# (명령행 인자 없음. 값은 전부 여기서 수정)
-# 데이터셋 정의는 preprocess_config.yaml 이 소유하며, preprocess.py 산출물을 data 로 가리킵니다.
+# yolo26s-obb 파인튜닝 + export 설정 (단일 스테이지).
+#   python train.py --config train_config.yaml
+# (--config 는 필수입니다. 생략하면 train.py 가 오류로 멈춥니다 — 조용한 기본값 없음)
+# 값은 전부 여기서 수정합니다. 2단계 학습은 train_config.stage1/stage2.yaml 을 쓰세요.
+# 데이터셋 정의는 preprocess.single.yaml 이 소유하며, 그 산출물을 data 로 가리킵니다.
 
-# 무엇을 돌릴지. 재학습 없이 export 만: train: false, export: true
+# 무엇을 돌릴지 — 블록 자체가 필수이며, 키를 오타내면 오류로 알려줍니다.
+# 재학습 없이 export 만: train: false, export: true
 stages:
   preview_aug: false         # 증강이 어떻게 먹는지 먼저 눈으로 볼 때만 true
   train: true
   export: true
 
 train:
-  model: yolo26s-seg.pt      # 시작 가중치. 없으면 Ultralytics가 자동 다운로드
-  data: ../datasets/processed/data.yaml   # preprocess.py 산출물
+  model: yolo26s-obb.pt      # 시작 가중치. 없으면 Ultralytics가 자동 다운로드
+  data: ../datasets/processed/data.yaml   # preprocess.py 산출물 (전 소스 통합본)
   epochs: 100
   imgsz: 640                 # 앱이 640으로 추론 → 640 유지 권장
   batch: -1                  # -1 = GPU 메모리에 맞춰 AutoBatch. 정수로 고정 가능
   device: "0"                # GPU 인덱스. 예: "0" 또는 "0,1", CPU는 "cpu"
   workers: 8
   patience: 30               # 개선 없는 epoch 수(EarlyStopping)
-  project: runs/segment      # 결과 저장 루트
-  name: yolo26s-seg-finetune # runs/segment/<name>
+  project: runs/obb          # 결과 저장 루트 (finetuner/ 기준)
+  name: yolo26s-obb-finetune # 실제 저장 위치: runs/obb/<name>/<YYMMDD_HHMMSS>/
   resume: false              # true면 마지막 체크포인트에서 이어서
   optimizer: auto
   cos_lr: true
@@ -51,10 +54,10 @@ export:
   dynamic: false
   # export된 onnx를 복사할 목적지(앱 Models 폴더). 비우면 복사 안 함.
   # 기존 파일은 그대로 두고, 실제 파일명엔 타임스탬프가 붙습니다.
-  #   예: yolo26s-seg.onnx → yolo26s-seg.20260723_153000.onnx
-  deploy_to: ../src/BaslerLiveView/Models/yolo26s-seg.onnx
+  #   예: yolo26s-obb.onnx → yolo26s-obb.20260723_153000.onnx
+  deploy_to: ../src/BaslerLiveView/Models/yolo26s-obb.onnx
 
-# stages.preview_aug 설정. 실제 학습 결과(runs/segment)와 섞이지 않게 따로 나갑니다.
+# stages.preview_aug 설정. 실제 학습 결과(runs/obb)와 섞이지 않게 따로 나갑니다.
 preview:
   project: runs/preview
   name: aug

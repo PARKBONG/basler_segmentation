@@ -28,7 +28,10 @@ namespace BaslerLiveView;
 /// </summary>
 public sealed class FrameRecorder : IDisposable
 {
-    private sealed record Frame(int Width, int Height, byte[] Bgra, int Index);
+    // Dir/Session ride along with each frame so late writes from a previous
+    // session still land in that session's folder after a quick stop/restart.
+    private sealed record Frame(int Width, int Height, byte[] Bgra, int Index,
+                                string Dir, string Session);
 
     private readonly BlockingCollection<Frame> _queue;
     private readonly Thread _worker;
@@ -47,18 +50,23 @@ public sealed class FrameRecorder : IDisposable
     /// <summary>Raised for encode/write failures on the worker thread.</summary>
     public event Action<Exception>? ErrorOccurred;
 
-    /// <param name="directory">Destination folder (already resolved to an absolute path).</param>
+    /// <param name="directory">Base folder (already resolved to an absolute path);
+    /// each session records into <c>kimm_YYMMDD_HHMMSS/images</c> underneath it.</param>
     /// <param name="queueCapacity">Max frames buffered before new ones are dropped.</param>
     public FrameRecorder(string directory, int queueCapacity = 120)
     {
         Directory = directory;
+        SessionDirectory = directory;   // until the first Start()
         _queue = new BlockingCollection<Frame>(Math.Max(1, queueCapacity));
         _worker = new Thread(WorkerLoop) { IsBackground = true, Name = "FrameRecorder" };
         _worker.Start();
     }
 
-    /// <summary>Absolute destination folder.</summary>
+    /// <summary>Absolute base folder session folders are created in.</summary>
     public string Directory { get; }
+
+    /// <summary>Absolute folder of the current (or last) session's images.</summary>
+    public string SessionDirectory { get; private set; }
 
     /// <summary>
     /// How many frames per second to keep. Grab-rate frames arriving between two
@@ -73,10 +81,11 @@ public sealed class FrameRecorder : IDisposable
     public int PendingCount => _queue.Count;
 
     /// <summary>
-    /// Resolve the configured destination. Absolute paths are used as-is; relative
+    /// Resolve the configured base folder. Absolute paths are used as-is; relative
     /// ones are anchored at the repo root — the nearest ancestor of the exe holding
-    /// <c>.git</c> — so the default <c>datasets/raw/images/train</c> lands exactly
-    /// where finetuner/preprocess.py reads the <c>raw</c> source from.
+    /// <c>.git</c> — so the default <c>datasets/raw</c> puts the per-session
+    /// <c>kimm_YYMMDD_HHMMSS/images</c> folders where finetuner/preprocess.py
+    /// reads its raw sources from.
     ///
     /// The marker is <c>.git</c> rather than any pipeline file on purpose: renaming
     /// or reorganising the finetuner scripts must not silently redirect recordings.
@@ -84,7 +93,7 @@ public sealed class FrameRecorder : IDisposable
     public static string ResolveDirectory(string configured)
     {
         if (string.IsNullOrWhiteSpace(configured))
-            configured = "datasets/raw/images/train";
+            configured = "datasets/raw";
 
         if (Path.IsPathRooted(configured))
             return Path.GetFullPath(configured);
@@ -101,15 +110,16 @@ public sealed class FrameRecorder : IDisposable
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, configured));
     }
 
-    /// <summary>Begin a capture session. Creates the destination folder if needed.</summary>
+    /// <summary>Begin a capture session. Creates a fresh session folder for it.</summary>
     public void Start()
     {
         if (_recording) return;
 
-        System.IO.Directory.CreateDirectory(Directory);
-        // One timestamp per session → files from different sessions never collide,
-        // and a plain name sort is also a chronological sort.
-        _session = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        // One timestamp per session → each REC run gets its own kimm_YYMMDD_HHMMSS/
+        // folder, so sessions never mix and a plain name sort is chronological.
+        _session = DateTime.Now.ToString("yyMMdd_HHmmss");
+        SessionDirectory = Path.Combine(Directory, $"kimm_{_session}", "images");
+        System.IO.Directory.CreateDirectory(SessionDirectory);
         _nextSaveTicks = _clock.ElapsedTicks;   // first frame of a session is always kept
         Volatile.Write(ref _accepted, 0);
         Volatile.Write(ref _saved, 0);
@@ -149,7 +159,7 @@ public sealed class FrameRecorder : IDisposable
         // Index counts accepted frames, so a gap in the file numbering is a
         // visible record of frames the disk could not keep up with.
         int index = Interlocked.Increment(ref _accepted);
-        if (!_queue.TryAdd(new Frame(width, height, copy, index)))
+        if (!_queue.TryAdd(new Frame(width, height, copy, index, SessionDirectory, _session)))
             Interlocked.Increment(ref _dropped);
     }
 
@@ -179,7 +189,8 @@ public sealed class FrameRecorder : IDisposable
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
 
-        var path = Path.Combine(Directory, $"cap_{_session}_{frame.Index:D5}.png");
+        // 6-digit index prefix — same convention as finetuner/download.py's raw files.
+        var path = Path.Combine(frame.Dir, $"{frame.Index:D6}__cap_{frame.Session}.png");
         using var file = File.Create(path);
         data.SaveTo(file);
     }

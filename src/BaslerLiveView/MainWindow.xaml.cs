@@ -263,14 +263,15 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Push the toolbar's crop controls onto the cropper. Invalid or empty
-    /// size text is simply ignored, so typing "6" on the way to "640" is harmless.</summary>
+    /// size text is simply ignored, so typing "6" on the way to "640" is harmless.
+    /// 0 is accepted and means the full frame on that axis (preprocess.py convention).</summary>
     private void ApplyCropSettings()
     {
         if (!_cropUiReady) return;
 
         _cropper.Enabled = CropCheck.IsChecked == true;
-        if (int.TryParse(CropWidthBox.Text, out int w) && w > 0) _cropper.Width = w;
-        if (int.TryParse(CropHeightBox.Text, out int h) && h > 0) _cropper.Height = h;
+        if (int.TryParse(CropWidthBox.Text, out int w) && w >= 0) _cropper.Width = w;
+        if (int.TryParse(CropHeightBox.Text, out int h) && h >= 0) _cropper.Height = h;
         _cropper.CenterXPercent = CropXSlider.Value;
         _cropper.CenterYPercent = CropYSlider.Value;
 
@@ -336,7 +337,7 @@ public partial class MainWindow : Window
             {
                 _recorder.Start();
                 var rate = _recorder.SaveFps > 0 ? $"{_recorder.SaveFps:0.##} fps" : "every frame";
-                StatusText.Text = $"REC ({rate}) → {_recorder.Directory}";
+                StatusText.Text = $"REC ({rate}) → {_recorder.SessionDirectory}";
             }
             catch (Exception ex)
             {
@@ -347,7 +348,7 @@ public partial class MainWindow : Window
         else
         {
             _recorder.Stop();
-            StatusText.Text = $"REC stopped — {_recorder.SavedCount + _recorder.PendingCount} frame(s) → {_recorder.Directory}";
+            StatusText.Text = $"REC stopped — {_recorder.SavedCount + _recorder.PendingCount} frame(s) → {_recorder.SessionDirectory}";
         }
     }
 

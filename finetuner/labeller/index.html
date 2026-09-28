@@ -1,0 +1,544 @@
+<title>OBB 라벨러</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: #16181d; color: #e6e6e6;
+    font: 14px/1.5 -apple-system, "Segoe UI", sans-serif;
+  }
+  h1 { font-size: 16px; margin: 0 0 4px; font-weight: 600; }
+  #meta { color: #9aa0aa; margin-bottom: 12px; }
+  #meta b { color: #e6e6e6; }
+  .layout { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+  #stage { position: relative; line-height: 0; background: #000; border: 1px solid #333; }
+  #stage canvas { display: block; cursor: crosshair; touch-action: none; }
+  #side { min-width: 260px; flex: 1; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  button {
+    background: #262a33; color: #e6e6e6; border: 1px solid #3a3f4b; border-radius: 6px;
+    padding: 7px 12px; cursor: pointer; font-size: 13px;
+  }
+  button:hover { background: #303541; }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary { background: #2f6f4f; border-color: #3c8a63; }
+  button.primary:hover { background: #37835d; }
+  button.danger { background: #6f2f2f; border-color: #8a3c3c; }
+  button.danger:hover { background: #833737; }
+  #status { min-height: 20px; color: #8fd08f; font-size: 13px; margin-bottom: 8px; }
+  #status.err { color: #e08a8a; }
+  #warn {
+    display: none; background: #4a3411; border: 1px solid #8a6a2c; border-radius: 6px;
+    color: #f0c26a; padding: 7px 10px; font-size: 12px; margin-bottom: 10px;
+  }
+  #warn.on { display: block; }
+  fieldset { border: 1px solid #333; border-radius: 6px; margin: 0 0 12px; padding: 8px 10px; }
+  legend { color: #9aa0aa; padding: 0 4px; font-size: 12px; }
+  #film { display: flex; flex-wrap: wrap; gap: 3px; max-height: 260px; overflow-y: auto; }
+  .cell {
+    width: 26px; height: 22px; font-size: 10px; display: flex; align-items: center;
+    justify-content: center; border-radius: 3px; border: 1px solid #333; cursor: pointer;
+    background: #2a2d34; color: #9aa0aa;
+  }
+  .cell.labeled { background: #2f6f4f; color: #d8f5e2; border-color: #3c8a63; }
+  .cell.current { outline: 2px solid #6fb0ff; }
+  .help { color: #6f7580; font-size: 12px; margin-top: 10px; }
+  kbd {
+    background: #262a33; border: 1px solid #3a3f4b; border-radius: 3px; padding: 1px 5px;
+    font-family: inherit;
+  }
+  input[type=number] {
+    background: #262a33; color: #e6e6e6; border: 1px solid #3a3f4b; border-radius: 6px;
+    padding: 6px 8px; width: 84px; font-size: 13px;
+  }
+  .unit { color: #9aa0aa; font-size: 12px; align-self: center; }
+</style>
+
+<h1>OBB 라벨러</h1>
+<div id="meta">
+  소스: <b id="m-source">-</b> · 클래스: <b id="m-class">-</b> ·
+  <b id="m-idx">-</b> / <b id="m-total">-</b> · 라벨됨 <b id="m-labeled">-</b>
+</div>
+
+<div class="layout">
+  <div id="stage"><canvas id="cv"></canvas></div>
+
+  <div id="side">
+    <div id="status"></div>
+    <div id="warn"></div>
+
+    <fieldset>
+      <legend>이동</legend>
+      <div class="row">
+        <button id="prev">◀ 이전</button>
+        <button id="next">다음 ▶</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>두께 (대각선과 함께 회전을 결정)</legend>
+      <div class="row">
+        <input id="thick" type="number" min="6" step="1">
+        <span class="unit">px (원본 기준) · 휠 또는 <kbd>[</kbd><kbd>]</kbd></span>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>이 이미지</legend>
+      <div class="row">
+        <button id="save" class="primary">저장 (이 이미지만)</button>
+        <button id="clear" class="danger">지우기</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>일괄 복사 — 지금 그려진 박스를…</legend>
+      <div class="row">
+        <button id="copy-empty">라벨 없는 이미지에만 채우기</button>
+      </div>
+      <div class="row">
+        <button id="copy-all" class="danger">전체 이미지에 덮어쓰기</button>
+      </div>
+    </fieldset>
+
+    <div class="help">
+      <b>드래그 = 대각 꼭짓점 두 개</b> (노란 점) — 위 두께와 짝을 이뤄 회전이 자동으로
+      정해집니다. wire 를 감싸도록 한쪽 끝 모서리에서 반대쪽 끝 모서리로 그으세요.<br>
+      박스 안 드래그 = 이동 · 모서리 = 크기(대칭) · 변 중앙 = 가로/세로만 ·
+      위쪽 파란 손잡이 = 회전 (미세 조정용)<br>
+      <kbd>←</kbd>/<kbd>→</kbd> 이전/다음 · 휠 또는 <kbd>[</kbd>/<kbd>]</kbd> 두께 ±1px
+      (<kbd>Shift</kbd> ±5px) · <kbd>Q</kbd>/<kbd>E</kbd> 회전 ±1°
+      (<kbd>Shift</kbd> ±0.1°) · <kbd>Enter</kbd> 저장 · <kbd>Delete</kbd> 지우기<br>
+      점선 사각형 = configs/preprocess.yaml 크롭 창(고정일 때만 표시) — 박스가 이 안에
+      최대한 들어와야 전처리에서 잘려 나가지 않습니다.
+    </div>
+
+    <div class="help" id="film-wrap">
+      <div style="margin-bottom:4px;">전체 목록 (초록 = 라벨됨)</div>
+      <div id="film"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+const MAX_W = 1100;          // 캔버스 표시 최대 너비(px) — 원본은 그대로, 축소 표시만
+const MIN_SIZE = 6;          // 박스 최소 변 길이(이미지 픽셀)
+const HANDLE_R = 7;          // 손잡이 히트 반경(캔버스 px)
+const ROTATE_OFFSET = 32;    // 회전 손잡이가 위쪽으로 떨어진 거리(캔버스 px)
+
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const img = new Image();
+
+let cfg = null;              // /api/config
+let files = [];              // [{name, labeled}]
+let idx = 0;
+let scale = 1;
+let box = null;               // {cx, cy, w, h, angle(rad)} — 이미지 픽셀 좌표
+let drag = null;              // 진행 중인 마우스 조작 상태
+let thickness = 40;           // 대각선과 짝을 이뤄 회전을 결정하는 두께(이미지 픽셀)
+
+function setStatus(msg, isErr) {
+  const el = document.getElementById("status");
+  el.textContent = msg || "";
+  el.className = isErr ? "err" : "";
+}
+
+// ── 서버 통신 ────────────────────────────────────────────────────────────
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+async function loadConfig() {
+  cfg = await api("/api/config");
+  document.getElementById("m-source").textContent = cfg.source;
+  document.getElementById("m-class").textContent = cfg.class_name;
+}
+
+async function loadImages() {
+  const data = await api("/api/images");
+  files = data.images;
+  renderFilm();
+  renderMeta();
+}
+
+function renderMeta() {
+  document.getElementById("m-idx").textContent = files.length ? idx + 1 : 0;
+  document.getElementById("m-total").textContent = files.length;
+  document.getElementById("m-labeled").textContent = files.filter(f => f.labeled).length;
+}
+
+function renderFilm() {
+  const film = document.getElementById("film");
+  film.innerHTML = "";
+  files.forEach((f, i) => {
+    const d = document.createElement("div");
+    d.className = "cell" + (f.labeled ? " labeled" : "") + (i === idx ? " current" : "");
+    d.textContent = i + 1;
+    d.title = f.name;
+    d.onclick = () => goTo(i);
+    film.appendChild(d);
+  });
+}
+
+// ── 이미지/라벨 전환 ─────────────────────────────────────────────────────
+
+async function goTo(i) {
+  if (!files.length) return;
+  idx = ((i % files.length) + files.length) % files.length;
+  const name = files[idx].name;
+  img.src = "/image/" + encodeURIComponent(name) + "?t=" + Date.now();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+
+  scale = Math.min(1, MAX_W / img.naturalWidth);
+  cv.width = Math.round(img.naturalWidth * scale);
+  cv.height = Math.round(img.naturalHeight * scale);
+
+  const label = await api("/api/label?name=" + encodeURIComponent(name));
+  box = label.points ? pointsToBox(label.points, img.naturalWidth, img.naturalHeight) : null;
+
+  renderMeta();
+  renderFilm();
+  draw();
+  setStatus("");
+}
+
+// points(정규화 0-1, 4점) → {cx,cy,w,h,angle} 근사(cv2.minAreaRect 없이 JS 만으로).
+// 4점이 이미 회전 사각형이라는 전제 — 대각선 중점을 중심으로, 인접 변 길이로 w/h,
+// 첫 변의 방향으로 angle을 잡는다.
+function pointsToBox(pts, W, H) {
+  const px = pts.map(([x, y]) => [x * W, y * H]);
+  const cx = (px[0][0] + px[2][0]) / 2, cy = (px[0][1] + px[2][1]) / 2;
+  const w = Math.hypot(px[1][0] - px[0][0], px[1][1] - px[0][1]);
+  const h = Math.hypot(px[3][0] - px[0][0], px[3][1] - px[0][1]);
+  const angle = Math.atan2(px[1][1] - px[0][1], px[1][0] - px[0][0]);
+  return { cx, cy, w: Math.max(w, MIN_SIZE), h: Math.max(h, MIN_SIZE), angle };
+}
+
+function corners(b) {
+  const c = Math.cos(b.angle), s = Math.sin(b.angle);
+  const local = [[-b.w / 2, -b.h / 2], [b.w / 2, -b.h / 2], [b.w / 2, b.h / 2], [-b.w / 2, b.h / 2]];
+  return local.map(([lx, ly]) => [b.cx + lx * c - ly * s, b.cy + lx * s + ly * c]);
+}
+
+function boxToPoints(b, W, H) {
+  return corners(b).map(([x, y]) => [x / W, y / H]);
+}
+
+// ── 대각 꼭짓점 두 개 + 두께 → 회전 사각형 ─────────────────────────────────
+//
+// 대각선만으로는 회전이 안 정해집니다(같은 대각선을 갖는 사각형이 무한개). 두께 h 를
+// 함께 주면 유일해집니다: 대각 벡터 D = w·u + h·v (u = 긴 변 방향, v ⊥ u) 이므로
+//     d = |D|,  w = √(d² − h²),  ∠u = ∠D − atan2(h, w)
+// wire 처럼 두께가 일정한 대상은 두께를 한 번 정해두고 대각선만 그으면 됩니다.
+
+function boxFromDiagonal(p0, p2, h) {
+  const dx = p2[0] - p0[0], dy = p2[1] - p0[1];
+  const d = Math.hypot(dx, dy);
+  if (d < MIN_SIZE) return null;
+  const hMax = Math.sqrt(Math.max(d * d - MIN_SIZE * MIN_SIZE, 0));  // w ≥ MIN_SIZE 보장
+  const hh = Math.min(Math.max(h, MIN_SIZE), Math.max(hMax, MIN_SIZE));
+  const w = Math.sqrt(Math.max(d * d - hh * hh, MIN_SIZE * MIN_SIZE));
+  return {
+    cx: (p0[0] + p2[0]) / 2, cy: (p0[1] + p2[1]) / 2,
+    w, h: hh, angle: Math.atan2(dy, dx) - Math.atan2(hh, w),
+  };
+}
+
+/** 박스의 대각 꼭짓점 쌍 — boxFromDiagonal 의 역함수 (0번·2번 꼭짓점). */
+function diagOf(b) {
+  const c = corners(b);
+  return [c[0], c[2]];
+}
+
+/**
+ * 두께 변경. 박스가 있으면 대각 꼭짓점 두 개를 고정한 채 다시 만듭니다
+ * (대각선이 그대로이므로 찍어둔 두 점이 계속 꼭짓점에 남고, 회전만 따라 바뀝니다).
+ */
+function setThickness(t, redraw = true) {
+  thickness = Math.max(MIN_SIZE, Math.round(t));
+  try { localStorage.setItem("obb-thickness", String(thickness)); } catch (e) { /* 무시 */ }
+  document.getElementById("thick").value = thickness;
+  if (box) {
+    const [p0, p2] = diagOf(box);
+    box = boxFromDiagonal(p0, p2, thickness) || box;
+  }
+  if (redraw) draw();
+}
+
+// ── crop 미리보기(고정 창일 때만) — preprocess.py crop_rect() 와 동일 공식 ───
+
+function cropRect(W, H) {
+  const c = cfg && cfg.crop;
+  if (!c) return null;
+  const size = (want, src) => { want = want || 0; return want <= 0 ? src : Math.min(want, src); };
+  const w = size(c.width, W), h = size(c.height, H);
+  const cx = Math.min(Math.max(c.center_x, 0), 100), cy = Math.min(Math.max(c.center_y, 0), 100);
+  const x = Math.round((W - w) * cx / 100), y = Math.round((H - h) * cy / 100);
+  return [x, y, w, h];
+}
+
+// 박스가 크롭 창을 벗어나면 preprocess.py 가 이 라벨을 폴리곤으로 클리핑합니다.
+// 이 소스는 type: obb 라 클리핑 결과가 그대로 나가므로, 꼭짓점이 4개가 아닌 라벨이
+// 조용히 processed/ 에 남습니다(면적이 min_area 미만이면 인스턴스째 사라짐).
+// → 창 밖으로 나간 꼭짓점 수를 세어 경고합니다.
+function outsideCount() {
+  const rect = cropRect(img.naturalWidth, img.naturalHeight);
+  if (!rect || !box) return 0;
+  const [x, y, w, h] = rect;
+  return corners(box).filter(([px, py]) => px < x || py < y || px > x + w || py > y + h).length;
+}
+
+function renderWarn() {
+  const el = document.getElementById("warn");
+  const n = outsideCount();
+  el.className = n ? "on" : "";
+  el.textContent = n
+    ? `박스 꼭짓점 ${n}개가 크롭 창(점선) 밖입니다 — 전처리에서 잘려 나가 OBB 가 ` +
+      `망가집니다. 박스를 창 안으로 넣으세요.`
+    : "";
+}
+
+// ── 렌더 ─────────────────────────────────────────────────────────────────
+
+function strokeBox(b, color) {
+  const pts = corners(b).map(([x, y]) => [x * scale, y * scale]);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function draw() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(img, 0, 0, cv.width, cv.height);
+
+  renderWarn();
+
+  const rect = cropRect(img.naturalWidth, img.naturalHeight);
+  if (rect) {
+    const [x, y, w, h] = rect;
+    ctx.save();
+    ctx.strokeStyle = outsideCount() ? "rgba(255,120,80,.95)" : "rgba(255,210,80,.9)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 5]);
+    ctx.strokeRect(x * scale, y * scale, w * scale, h * scale);
+    ctx.restore();
+  }
+
+  // 그리는 중이면 대각선 + 그 대각선/두께로 만들어질 박스를 미리 보여준다.
+  if (drag && drag.type === "new") {
+    const preview = boxFromDiagonal(drag.p0, drag.p1, thickness);
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,80,80,.55)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(drag.p0[0] * scale, drag.p0[1] * scale);
+    ctx.lineTo(drag.p1[0] * scale, drag.p1[1] * scale);
+    ctx.stroke();
+    ctx.restore();
+    if (preview) strokeBox(preview, "#ff5050");
+    return;
+  }
+
+  if (!box) return;
+  strokeBox(box, "#ff5050");
+
+  ctx.save();
+  for (const h of handles(box)) {
+    ctx.beginPath();
+    ctx.fillStyle = h.type === "rotate" ? "#6fb0ff" : h.diag ? "#ffd24f" : "#ff5050";
+    ctx.arc(h.cx, h.cy, HANDLE_R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#111"; ctx.lineWidth = 1; ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// 손잡이 목록: 4 모서리(대칭 w+h) · 4 변 중앙(대칭 w 또는 h) · 1 회전. 캔버스 좌표 포함.
+function handles(b) {
+  const c = Math.cos(b.angle), s = Math.sin(b.angle);
+  const toCanvas = (lx, ly) => [(b.cx + lx * c - ly * s) * scale, (b.cy + lx * s + ly * c) * scale];
+  const defs = [
+    // diag = boxFromDiagonal 이 쓰는 대각 꼭짓점 쌍 (노란색으로 구분해 표시)
+    { type: "corner", lx: -b.w / 2, ly: -b.h / 2, diag: true },
+    { type: "corner", lx: b.w / 2, ly: -b.h / 2 },
+    { type: "corner", lx: b.w / 2, ly: b.h / 2, diag: true },
+    { type: "corner", lx: -b.w / 2, ly: b.h / 2 },
+    { type: "edge-w", lx: b.w / 2, ly: 0 },
+    { type: "edge-w", lx: -b.w / 2, ly: 0 },
+    { type: "edge-h", lx: 0, ly: b.h / 2 },
+    { type: "edge-h", lx: 0, ly: -b.h / 2 },
+    { type: "rotate", lx: 0, ly: -b.h / 2 - ROTATE_OFFSET / scale },
+  ];
+  return defs.map(d => { const [cx, cy] = toCanvas(d.lx, d.ly); return { ...d, cx, cy }; });
+}
+
+function toLocal(b, ix, iy) {
+  const dx = ix - b.cx, dy = iy - b.cy;
+  const c = Math.cos(-b.angle), s = Math.sin(-b.angle);
+  return [dx * c - dy * s, dx * s + dy * c];
+}
+
+function insideBox(b, ix, iy) {
+  const [lx, ly] = toLocal(b, ix, iy);
+  return Math.abs(lx) <= b.w / 2 && Math.abs(ly) <= b.h / 2;
+}
+
+// ── 마우스 조작 ──────────────────────────────────────────────────────────
+
+function canvasToImage(evt) {
+  const r = cv.getBoundingClientRect();
+  const cx = (evt.clientX - r.left) * (cv.width / r.width);
+  const cy = (evt.clientY - r.top) * (cv.height / r.height);
+  return [cx / scale, cy / scale];
+}
+
+function hitHandle(cx, cy) {
+  if (!box) return null;
+  return handles(box).find(h => Math.hypot(h.cx - cx, h.cy - cy) <= HANDLE_R + 3) || null;
+}
+
+cv.addEventListener("mousedown", (evt) => {
+  const [ix, iy] = canvasToImage(evt);
+  const h = hitHandle(evt.offsetX * (cv.width / cv.clientWidth), evt.offsetY * (cv.height / cv.clientHeight));
+
+  if (h) {
+    drag = { type: h.type, start: { ...box } };
+  } else if (box && insideBox(box, ix, iy)) {
+    drag = { type: "move", start: { ...box }, from: [ix, iy] };
+  } else {
+    drag = { type: "new", p0: [ix, iy], p1: [ix, iy] };   // 대각 꼭짓점 첫 점
+  }
+  evt.preventDefault();
+});
+
+// 휠 = 두께 조절 (Shift 로 5px 단위). 캔버스 위에서만 먹고 페이지는 스크롤하지 않는다.
+cv.addEventListener("wheel", (evt) => {
+  evt.preventDefault();
+  setThickness(thickness + (evt.deltaY < 0 ? 1 : -1) * (evt.shiftKey ? 5 : 1));
+}, { passive: false });
+
+window.addEventListener("mousemove", (evt) => {
+  if (!drag) return;
+  const [ix, iy] = canvasToImage(evt);
+
+  if (drag.type === "new") {
+    drag.p1 = [Math.max(0, Math.min(img.naturalWidth, ix)),
+               Math.max(0, Math.min(img.naturalHeight, iy))];
+  } else if (drag.type === "move") {
+    box.cx = drag.start.cx + (ix - drag.from[0]);
+    box.cy = drag.start.cy + (iy - drag.from[1]);
+  } else if (drag.type === "rotate") {
+    box.angle = Math.atan2(iy - box.cy, ix - box.cx) + Math.PI / 2;
+  } else if (drag.type === "corner" || drag.type === "edge-w" || drag.type === "edge-h") {
+    const [lx, ly] = toLocal(box, ix, iy);
+    if (drag.type !== "edge-h") box.w = Math.max(MIN_SIZE, 2 * Math.abs(lx));
+    if (drag.type !== "edge-w") box.h = Math.max(MIN_SIZE, 2 * Math.abs(ly));
+  }
+  draw();
+});
+
+window.addEventListener("mouseup", () => {
+  if (!drag) return;
+  if (drag.type === "new") {
+    box = boxFromDiagonal(drag.p0, drag.p1, thickness) || box;   // 너무 짧으면 무시
+  } else if (drag.type === "corner" || drag.type === "edge-h") {
+    // 손잡이로 두께를 바꿨으면 그 값을 기준 두께로 삼는다 (다음 장에도 이어짐).
+    setThickness(box.h, false);
+  }
+  drag = null;
+  draw();
+});
+
+// ── 저장 / 복사 ──────────────────────────────────────────────────────────
+
+async function saveCurrent() {
+  if (!files.length) return;
+  const name = files[idx].name;
+  const points = box ? boxToPoints(box, img.naturalWidth, img.naturalHeight) : null;
+  try {
+    const res = await api("/api/label", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, points }),
+    });
+    files[idx].labeled = !!points;
+    document.getElementById("m-labeled").textContent = res.labeled;
+    renderFilm();
+    setStatus((points ? "저장됨: " : "지움: ") + name);
+  } catch (e) { setStatus(e.message, true); }
+}
+
+async function clearCurrent() {
+  box = null;
+  draw();
+  await saveCurrent();
+}
+
+async function copyToAll(overwrite) {
+  if (!box) { setStatus("먼저 이 이미지에 박스를 그리세요.", true); return; }
+  const out = outsideCount();
+  if (out && !confirm(`박스 꼭짓점 ${out}개가 크롭 창 밖입니다 — 전처리에서 OBB 가 ` +
+                      `망가집니다. 그래도 전체에 복사할까요?`)) return;
+  if (overwrite && !confirm(`전체 ${files.length}장의 기존 라벨을 지금 박스로 덮어씁니다. 계속할까요?`)) return;
+  const points = boxToPoints(box, img.naturalWidth, img.naturalHeight);
+  try {
+    const res = await api("/api/copy", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ points, overwrite }),
+    });
+    await loadImages();
+    setStatus(`복사됨: ${res.written}장 (건너뜀 ${res.skipped}장)`);
+  } catch (e) { setStatus(e.message, true); }
+}
+
+// ── 키보드 ───────────────────────────────────────────────────────────────
+
+window.addEventListener("keydown", (evt) => {
+  if (drag || evt.target.tagName === "INPUT") return;
+  const step = (evt.shiftKey ? 0.1 : 1) * Math.PI / 180;
+  if (evt.key === "[") { setThickness(thickness - (evt.shiftKey ? 5 : 1)); }
+  else if (evt.key === "]") { setThickness(thickness + (evt.shiftKey ? 5 : 1)); }
+  else if (evt.key === "ArrowLeft") { goTo(idx - 1); }
+  else if (evt.key === "ArrowRight") { goTo(idx + 1); }
+  else if (evt.key === "q" || evt.key === "Q") { if (box) { box.angle -= step; draw(); } }
+  else if (evt.key === "e" || evt.key === "E") { if (box) { box.angle += step; draw(); } }
+  else if (evt.key === "Enter") { saveCurrent(); }
+  else if (evt.key === "Delete" || evt.key === "Backspace") { clearCurrent(); }
+  else return;
+  evt.preventDefault();
+});
+
+document.getElementById("prev").onclick = () => goTo(idx - 1);
+document.getElementById("next").onclick = () => goTo(idx + 1);
+document.getElementById("save").onclick = saveCurrent;
+document.getElementById("clear").onclick = clearCurrent;
+document.getElementById("copy-empty").onclick = () => copyToAll(false);
+document.getElementById("copy-all").onclick = () => copyToAll(true);
+
+const thickInput = document.getElementById("thick");
+thickInput.onchange = () => setThickness(Number(thickInput.value) || thickness);
+
+(async function init() {
+  let saved = 0;
+  try { saved = Number(localStorage.getItem("obb-thickness")) || 0; } catch (e) { /* 무시 */ }
+  thickness = Math.max(MIN_SIZE, saved || thickness);
+  thickInput.value = thickness;
+  await loadConfig();
+  await loadImages();
+  await goTo(0);
+})();
+</script>

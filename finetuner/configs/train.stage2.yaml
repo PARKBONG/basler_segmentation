@@ -1,0 +1,48 @@
+# Stage 2 (in-domain 적응) 파인튜닝 설정.
+#   python train.py --config train_config.stage2.yaml
+# (--config 는 필수입니다. 생략하면 train.py 가 오류로 멈춥니다 — 조용한 기본값 없음)
+# 데이터: preprocess.py 산출물 datasets/processed/kimm/data.yaml (train/val/test = in-domain)
+# 목적: Stage1 warm-start 위에 실제 추론 도메인(아크 광/카메라)에 최종 적응.
+#
+# ★ model: 에 Stage1 결과 checkpoint 를 직접 지정하세요 (독립 실행 + 수동 체이닝).
+#   Stage1 을 먼저 돌리고 평가한 뒤, 원하는 가중치 경로를 아래에 기입:
+#     runs/obb/stage1/weights/best.pt   또는   .../last.pt
+#   학습 결과는 runs/obb/stage1/<YYMMDD_HHMMSS>/ 로 쌓이는데, 위처럼 타임스탬프를 빼고
+#   적으면 stage1 의 **가장 최근 실행**을 씁니다. 특정 실행에 고정하려면 타임스탬프까지
+#   적으세요: runs/obb/stage1/260803_141230/weights/best.pt
+#   경로는 finetuner/ 기준이며, 파일이 없으면 train.py 가 즉시 멈춥니다
+#   (COCO 로 조용히 되돌아가서 warm-start 를 날리지 않도록).
+
+# 무엇을 돌릴지 — 블록 자체가 필수. 배포 대상은 stage2 이므로 export 를 켭니다.
+stages:
+  preview_aug: false
+  train: true
+  export: true
+
+train:
+  model: runs/obb/stage1/260802_044744weights/best.pt   # ← Stage1 checkpoint (직접 지정)
+  data: ../datasets/processed/kimm/data.yaml   # in-domain 만
+  epochs: 60
+  imgsz: 640
+  batch: -1
+  device: "0"
+  workers: 8
+  cache: true                # in-domain 500장 → RAM 상주(가볍게 감당). epoch 가속
+  patience: 20
+  project: runs/obb          # 결과 저장 루트 (finetuner/ 기준)
+  name: stage2               # 실제 저장 위치: runs/obb/stage2/<YYMMDD_HHMMSS>/
+  optimizer: auto
+  lr0: 0.001                 # Stage1 의 1/10 (catastrophic forgetting 방지)
+  freeze: 10                 # backbone 앞단 고정 (소량 과적합 방지). full 적응 원하면 0
+  cos_lr: true
+  hsv_v: 0.6                 # 밝기(value) 증강 ↑ — WAAM 아크 글레어 대응 (기본 0.4)
+  seed: 0
+
+export:
+  format: onnx
+  opset: 12                  # YoloDotNet(ONNX Runtime) 호환
+  simplify: true
+  half: false
+  dynamic: false
+  # 기존 파일은 그대로 두고, 새 파일에 타임스탬프가 붙습니다.
+  deploy_to: ../src/BaslerLiveView/Models/yolo26s-obb.onnx

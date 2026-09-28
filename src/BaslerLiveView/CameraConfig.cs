@@ -25,7 +25,9 @@ public sealed class CameraConfig
     /// and just outlines this window.</summary>
     public bool CropEnabled { get; set; } = true;
 
-    /// <summary>Crop size in pixels (training capture size, e.g. 640 or 960).</summary>
+    /// <summary>Crop size in pixels (training capture size, e.g. 640 or 960).
+    /// 0 means the full sensor extent on that axis — same convention as
+    /// finetuner/preprocess.py's crop.width/height.</summary>
     public int CropWidth { get; set; } = 640;
     public int CropHeight { get; set; } = 640;
 
@@ -106,11 +108,12 @@ public sealed class CameraConfig
                 var enabled = (bool?)crop.Element("Enabled");
                 if (enabled.HasValue) cfg.CropEnabled = enabled.Value;
 
+                // 0 is meaningful here (= full extent on that axis), so accept it too.
                 var w = (int?)crop.Element("Width");
-                if (w is > 0) cfg.CropWidth = w.Value;
+                if (w is >= 0) cfg.CropWidth = w.Value;
 
                 var h = (int?)crop.Element("Height");
-                if (h is > 0) cfg.CropHeight = h.Value;
+                if (h is >= 0) cfg.CropHeight = h.Value;
 
                 var cx = (double?)crop.Element("CenterX");
                 if (cx is >= 0 and <= 100) cfg.CropCenterX = cx.Value;

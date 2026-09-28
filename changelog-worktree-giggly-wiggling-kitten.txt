@@ -1,0 +1,83 @@
+# changelog — worktree-giggly-wiggling-kitten
+# 이 워크트리에서 수행한 작업 요약. merge 시 참고용.
+
+2026-08-01  finetuner config 통합
+  - train 브랜치(41cf914)를 fast-forward merge 후 작업
+  - preprocess_config.yaml / .stage1.yaml / .stage2.yaml 삭제 → download_config.yaml 하나로 통합
+    (sources: 소스 정의 한 번만 / stages: 스테이지별 out + use(val_ratio 등, 얕은 병합 덮어쓰기))
+  - preprocess.py: --config → --stage single|stage1|stage2 (생략/오타 시 후보 나열 오류),
+    targets: 키 → --only CLI 플래그로 대체. download.py 로직 무변경(roboflow 키 필터 그대로)
+  - selftest.py 새 스키마로 갱신, ALL PASS. README/common/train 문구 갱신
+  - train_config*.yaml 의 train.data 경로는 무변경 (스테이지 out 과 1:1 유지)
+  - 커밋: 135e1ae
+
+2026-08-01  train merge (pull)
+  - train(61ca4fd)을 이 브랜치로 merge — conflict 없이 auto-merge
+  - 들어온 것: download 인덱스 접두어(0000__, 39449af) + cached-tumbling-mountain changelog
+  - split_group 접두어 벗기기와 통합 config 구조가 함께 동작 확인 (selftest 105건 ALL PASS)
+  - selftest 확인 후 train 으로 fast-forward merge + origin/train push 완료 (사용자 지시)
+
+2026-08-01  train sync (pull → 검증 → push)
+  - train(f5cb3e8)을 pull — cached-tumbling-mountain 의 recorder 세션 폴더/6자리 인덱스
+    작업(89be71e) 포함, fast-forward 로 conflict 없음
+  - selftest 105건 ALL PASS 확인 후 origin/train 으로 push (사용자 지시)
+
+2026-08-01  preprocess: 이미지 지우면 짝 라벨 자동 삭제
+  - raw 에서 이미지 파일만 지우면 다음 실행 때 고아 라벨(.txt)을 자동 삭제
+    (prune_orphan_labels, collect_source 의 split 폴더마다 호출)
+  - 이미지 0장인 폴더는 경로 실수로 보고 라벨 보호 (경고만)
+  - selftest 3건 추가 (ALL PASS), README 사용법 추가. train merge/push 안 함
+
+2026-08-01  preprocess: 지정 클래스 없는 데이터 쌍 자동 삭제
+  - 라벨에 class_map 클래스가 하나도 없는 이미지+라벨 쌍을 raw 에서 삭제
+    (prune_no_class_pairs — 예: rf_a 에 wire 없는 데이터)
+  - 소스 전체가 미해당이면 class_map 오타로 보고 삭제 안 함 (전멸 보호, 경고만)
+  - 크롭으로 대상이 사라진 이미지는 삭제 대상 아님 (원본 라벨 기준)
+  - selftest 3건 추가 (ALL PASS), README 갱신. train merge/push 안 함
+  - (이후 87a06a8·f985af9 를 사용자 지시로 train merge + push)
+
+2026-08-01  train pull (configs/ 재구성 수용)
+  - train(e1ae012) fast-forward pull — cached-tumbling-mountain 의 재구성 포함:
+    configs/ 폴더 신설, pipeline.yaml(구 download_config) + preprocess/train/eval
+    스테이지별 yaml, CLI 는 --config 하나로 통일 (--stage/--only 는 config 로 이동)
+  - 내 자동 삭제 기능 2건(prune_orphan_labels, prune_no_class_pairs)은 유지됨
+  - selftest 116건 ALL PASS. push 는 별도 지시 대기
+
+2026-08-01  코드 점검 — class 묶기 정리 (동작 변화 없음)
+  - train pull 선행 (e93fc1c, download/preprocess 설정 완전 분리 수용, ff)
+  - Cropper 클래스 신설 (preprocess.py): 흩어져 있던 crop 설정 파싱·인라인 크롭
+    로직·통계 카운터를 묶음. 순수 기하 함수는 module-level 유지 (selftest 직접 검증)
+  - Stage.fail() (common.py): "[label] config명: ..." SystemExit 접두사 통일
+    (preprocess 3곳 · train 5곳 · eval 2곳 적용)
+  - INDEX_RE 를 common.py 로 일원화 — download 가 붙이고 preprocess.split_group 이
+    벗기는 파일명 인덱스 접두어 규약이 두 파일에 중복 정의돼 있던 것 해소
+  - Stage.cli() 통합(main() 4벌)은 사용자가 원치 않아 제외
+  - selftest 117건 ALL PASS 유지. train merge/push 안 함
+  - (이후 사용자 지시로 train merge + push, a026a02)
+
+2026-08-01  preprocess 산출물 레이아웃 변경
+  - out 을 datasets/processed/<스테이지>/ 로 통일 (stage1·stage2 가 datasets/ 루트에
+    생기던 것 제거, single 도 processed/single 로 — configs 의 out/data 경로 10곳 이동)
+  - preview 를 out 루트 _preview/ 에서 소스별 out/<소스>/preview/ 로 (count 는 소스당)
+  - selftest 118건 ALL PASS. 주의: 기존 datasets/processed·stage1·stage2 구위치
+    산출물은 재실행 시 안 쓰임 (gitignore 영역, 각 머신에서 정리). train push 대기
+  - (이후 사용자 지시로 train push, 296c4e5)
+
+2026-08-01  preprocess 스테이지 제거 — preprocess.yaml 하나로 통일
+  - train pull 선행 (OBB task 커밋 fcd562c·eeb6591 수용, ff)
+  - preprocess.single/stage1/stage2.yaml 삭제 → configs/preprocess.yaml 하나
+    (후보 1개라 python preprocess.py 인자 없이 자동). targets: 키로 일부 소스만 재굽기
+  - 산출물: datasets/processed/<소스>/ 직결 (스테이지 층 제거). 소스별
+    processed/<소스>/data.yaml 신규 생성 + 통합 processed/data.yaml 유지
+  - 스테이지는 train/eval 에만: train.stage1 → rf_a/data.yaml, train.stage2 →
+    kimm/data.yaml, train.single → 통합 data.yaml (eval 4벌도 동일하게 이동)
+  - 비율 통일: kimm val 0.2/test 0.1, rf_a val 0.1 (스테이지별 상이하던 것 단일화)
+    주의: train.single 의 val 에 공개(rf_a) val 이 섞이게 됨 — 원치 않으면 별도 논의
+  - selftest 128건 ALL PASS (소스별 data.yaml 검증 추가). train push 대기
+
+2026-08-01  train merge — OBB 모델 전환과 결합 (conflict 해소)
+  - push 직전 train 에 OBB 전환 커밋(633094f·da50469) 등장 → pull 시 train/eval
+    config 7개 conflict (같은 두 줄을 서로 다른 목적으로 수정)
+  - 사용자 승인 후 양쪽 결합으로 해소: train 쪽 OBB 모델/가중치(yolo26s-obb.pt,
+    runs/obb/...) + 내 쪽 새 data 경로(processed/rf_a·kimm·통합)
+  - selftest 128건 ALL PASS 확인 후 train ff merge + origin push (사용자 지시)

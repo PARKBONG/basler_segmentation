@@ -1,25 +1,44 @@
 """
 파이프라인 공통 기반 — 각 단계가 공유하는 config 로드 · 경로 해석 · 로그.
 
-각 단계는 자기 이름의 yaml 하나만 읽습니다 (명령행 인자 없음):
+설정 yaml 은 모두 configs/ 아래에 있고, 모든 스크립트의 인자는 --config 하나입니다.
+각 스크립트는 자기 패턴(config_glob)으로 configs/ 를 찾아서:
+  · 후보가 하나뿐이면 --config 없이 그 파일을 자동으로 읽습니다 (고를 게 없어 모호하지 않음).
+  · 후보가 여럿이면 --config 를 **반드시 명시**해야 합니다 — 기본값으로 조용히
+    넘어가면 의도한 것과 다른 데이터/설정으로 학습해도 알 수 없기 때문입니다.
 
-    download.py    → download_config.yaml     공개셋 획득
-    preprocess.py  → preprocess_config.yaml   병합 + 크롭 (+ 라벨 변환)
-    upload.py      → upload_config.yaml       로컬 폴더를 Roboflow 로 되돌려 보냄
-    train.py       → train_config.yaml        학습 + ONNX export
+    download.py                                  configs/download.yaml 자동 (후보 1개)
+    preprocess.py --config preprocess.stage1.yaml    데이터셋 굽기
+    train.py --config train.stage1.yaml              학습 + ONNX export
+    eval.py --config eval.stage2.yaml                체크포인트 평가
 
-경로는 모두 이 폴더(finetuner/) 기준 상대경로이거나 절대경로입니다.
+어느 쪽이든 읽은 config 경로는 항상 로그 첫 줄에 찍습니다.
+--config 인자는 configs/ 안 파일명으로도, 경로 그대로(finetuner/ 기준)로도 됩니다.
+yaml **내용물**의 경로(../datasets/… 등)는 configs/ 가 아니라 finetuner/ 기준입니다.
 """
 from __future__ import annotations
 
 import os
+import re
+from datetime import datetime
 from pathlib import Path
 
 import yaml
 
 HERE = Path(__file__).resolve().parent
+CONFIG_DIR = HERE / "configs"
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+# 파일명 앞 인덱스 접두어(000000__) 규약 — download.index_files 가 붙이고,
+# preprocess.split_group 이 rf 사본에서 벗겨 그룹핑합니다. 한쪽만 바꾸면
+# 분할 그룹핑이 조용히 깨지므로 정의는 여기 한 곳에만 둡니다.
+INDEX_RE = re.compile(r"^\d+__")
+
+# 학습 산출물 폴더 규약:  runs/obb/<name>/<YYMMDD_HHMMSS>/
+# 실행마다 타임스탬프 폴더가 하나씩 쌓이므로 이전 결과를 덮어쓰지 않고, config 의
+# project/name 은 그대로 두어도 됩니다. 정의는 여기 한 곳에만 둡니다.
+RUN_STAMP_RE = re.compile(r"^\d{6}_\d{6}$")
 
 
 def load_yaml(path: Path) -> dict:
@@ -35,6 +54,39 @@ def resolve(path_str) -> Path:
     return p if p.is_absolute() else (HERE / p)
 
 
+def run_stamp() -> str:
+    """이번 실행의 결과 폴더 이름 (YYMMDD_HHMMSS)."""
+    return datetime.now().strftime("%y%m%d_%H%M%S")
+
+
+def latest_run(root: Path) -> Path | None:
+    """<root>/YYMMDD_HHMMSS 중 가장 최근 것. 하나도 없으면 None."""
+    if not root.is_dir():
+        return None
+    runs = sorted(d for d in root.iterdir() if d.is_dir() and RUN_STAMP_RE.match(d.name))
+    return runs[-1] if runs else None
+
+
+def resolve_weights(path_str) -> Path:
+    """
+    가중치 경로 해석 (finetuner/ 기준).
+
+    학습 결과는 `runs/obb/<name>/<YYMMDD_HHMMSS>/weights/best.pt` 로 쌓이는데, config
+    에 타임스탬프를 매번 손으로 적게 하면 stage2·eval 이 금방 낡습니다. 그래서
+    타임스탬프를 뺀 `runs/obb/<name>/weights/best.pt` 로 적으면 그 name 의 **가장 최근
+    실행**에서 찾아줍니다. 타임스탬프까지 적으면 그 실행을 그대로 씁니다(고정 가능).
+
+    없는 경로는 그대로 돌려줍니다 — 오류 메시지는 호출부가 상황에 맞게 냅니다.
+    """
+    path = resolve(path_str)
+    if path.exists() or path.parent.name != "weights":
+        return path
+    latest = latest_run(path.parent.parent)     # .../<name>/weights/best.pt → .../<name>/
+    if latest is not None and (latest / "weights" / path.name).exists():
+        return latest / "weights" / path.name
+    return path
+
+
 def roboflow_api_key() -> str:
     """Roboflow API 키 — 보안상 yaml 이 아니라 환경변수에서만 읽습니다."""
     key = os.environ.get("ROBOFLOW_API_KEY", "").strip()
@@ -45,11 +97,6 @@ def roboflow_api_key() -> str:
             "  bash:        export ROBOFLOW_API_KEY=xxxx"
         )
     return key
-
-
-def count_images(root: Path) -> int:
-    """폴더 아래 이미지 파일 수 (업로드 전 규모 확인용)."""
-    return sum(1 for p in root.rglob("*") if p.suffix.lower() in IMG_EXTS)
 
 
 def normalize_names(names) -> dict:
@@ -65,27 +112,77 @@ class Stage:
     """
     파이프라인 한 단계.
 
-    서브클래스는 `config_name` 과 `run()` 만 정의하면 됩니다. 단계끼리 import 해서
+    서브클래스는 `config_glob` 과 `run()` 만 정의하면 됩니다. 단계끼리 import 해서
     한 프로세스 안에서 이어 붙이는 것도 가능합니다:
 
-        Downloader().run(); Preprocessor().run(); Trainer().run()
+        Downloader().run(); Preprocessor("preprocess.single.yaml").run()
+        Trainer("train.single.yaml").run()
+
+    config 인자를 생략하면: configs/ 의 후보가 하나뿐일 때만 자동으로 그 파일을
+    읽고, 여럿이면 후보 목록과 함께 거절합니다 — 기본값을 고르는 순간
+    "무엇으로 학습했는지" 를 잃기 때문입니다.
     """
 
-    config_name: str = ""
-    label: str = "stage"
+    config_glob: str = ""      # configs/ 에서 이 단계의 config 를 찾는 패턴
+    label: str = "stage"       # 로그 접두사 겸 스크립트 이름(<label>.py)
 
     def __init__(self, config_path=None) -> None:
-        if not self.config_name:
-            raise NotImplementedError(f"{type(self).__name__}: config_name 을 정의하세요.")
-        self.config_path = Path(config_path) if config_path else HERE / self.config_name
+        if not self.config_glob:
+            raise NotImplementedError(f"{type(self).__name__}: config_glob 을 정의하세요.")
+
+        if config_path is None:
+            found = self.candidate_paths()
+            if len(found) == 1:
+                config_path = found[0]   # 후보가 하나면 자동 — 고를 게 없어 모호하지 않다
+            else:
+                raise SystemExit(
+                    f"[{self.label}] 읽을 config 를 명시하세요 — 후보가 "
+                    f"{'없어' if not found else '여럿이라'} 기본값으로 조용히 넘어가지 "
+                    f"않습니다.\n"
+                    f"  python {self.label}.py --config <yaml>\n"
+                    f"  configs/ 의 후보: {self.config_candidates()}"
+                )
+
+        # 경로 그대로(finetuner/ 기준) 먼저, 없으면 configs/<이름> 으로도 찾는다 —
+        # `--config train.single.yaml` 처럼 파일명만 적어도 되게 하기 위함.
+        self.config_path = resolve(config_path)
+        if not self.config_path.exists():
+            alt = CONFIG_DIR / str(config_path)
+            if alt.exists():
+                self.config_path = alt
+        if not self.config_path.exists():
+            # 이름을 잘못 적었을 때 traceback 대신 후보를 보여준다
+            raise SystemExit(
+                f"[{self.label}] config 파일이 없습니다: {self.config_path}\n"
+                f"  configs/ 의 후보: {self.config_candidates()}"
+            )
         self.cfg = load_yaml(self.config_path)
+        self.log(f"config: {self.config_path}")   # 무엇을 읽었는지 항상 남긴다
+
+    @classmethod
+    def candidate_paths(cls) -> list:
+        """configs/ 에서 이 단계가 쓸 수 있는 config 파일들."""
+        return sorted(CONFIG_DIR.glob(cls.config_glob))
+
+    @classmethod
+    def config_candidates(cls) -> str:
+        found = [p.name for p in cls.candidate_paths()]
+        return ", ".join(found) or "(없음)"
 
     @staticmethod
     def resolve(path_str) -> Path:
         return resolve(path_str)
 
+    @staticmethod
+    def resolve_weights(path_str) -> Path:
+        return resolve_weights(path_str)
+
     def log(self, msg: str) -> None:
         print(f"[{self.label}] {msg}")
+
+    def fail(self, msg: str):
+        """설정 문제로 즉시 중단 — 어느 단계의 어느 config 인지 접두사를 일관되게 붙인다."""
+        raise SystemExit(f"[{self.label}] {self.config_path.name}: {msg}")
 
     def run(self) -> None:
         raise NotImplementedError
