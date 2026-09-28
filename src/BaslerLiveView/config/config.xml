@@ -28,13 +28,33 @@
          여기서 슬라이더로 찾은 위치(%)를 finetuner/preprocess_config.yaml 의
          crop.center_x/center_y 에 그대로 옮겨 적으면 됩니다(같은 0~100% 규약). -->
     <Enabled>true</Enabled>
-    <Width>640</Width>
-    <Height>640</Height>
+    <Width>1280</Width>
+    <Height>1280</Height>
     <!-- 크롭 창의 위치(%). 0 = 왼쪽/위 끝, 100 = 오른쪽/아래 끝, 50 = 중앙.
          앱 실행 중에는 툴바 슬라이더로 바로 조절할 수 있고, 여기 값은 시작값입니다. -->
-    <CenterX>50</CenterX>
-    <CenterY>50</CenterY>
+    <CenterX>40</CenterX>
+    <CenterY>65</CenterY>
   </Crop>
+  <ReferenceOverlay>
+    <!-- 기구부(금속 튜브 + 와이어) 누끼 오버레이. 카메라가 eye-in-hand 라서
+         이 기구부는 화면에서 항상 같은 자리에 보입니다(와이어는 길이만 변함).
+         tools\make_reference_cutout.py 가 datasets\reference.png 에서 만든
+         RGBA 누끼를 앱 시작 시 읽어 라이브 뷰 위에 반투명으로 얹습니다.
+         파일이 없으면 조용히 건너뜁니다. 상대경로는 저장소 루트 기준. -->
+    <Enabled>true</Enabled>
+    <Path>datasets/reference_cutout.png</Path>
+    <!-- 오버레이 불투명도 0~1. 라이브 영상이 비쳐 보이도록 낮게 두는 걸 권장. -->
+    <Opacity>0.35</Opacity>
+    <!-- 누끼 실루엣을 딴 초록 윤곽선 레이어(같은 스크립트가 함께 생성).
+         누끼와 달리 선명하게 보여야 하므로 불투명도를 따로 둡니다. -->
+    <OutlinePath>datasets/reference_outline.png</OutlinePath>
+    <OutlineOpacity>0.9</OutlineOpacity>
+    <!-- 툴바의 Save Ref 버튼: 지금 보이는 풀 프레임을 datasets\reference.png 로
+         저장하고, 아래 파이썬으로 tools\make_reference_cutout.py 를 돌려 누끼를
+         다시 만든 뒤 오버레이를 바로 갱신합니다. cv2/numpy 가 있는 파이썬이어야
+         합니다(이 PC에서는 conda 환경 basler_py311). -->
+    <Python>C:\Users\user\.conda\envs\basler_py311\python.exe</Python>
+  </ReferenceOverlay>
   <Recording>
     <!-- Record 버튼이 PNG를 저장할 폴더. 저장되는 건 크롭 전 '풀사이즈 원본'입니다
          (크롭은 라벨까지 같이 잘라야 하므로 finetuner/preprocess.py 가 담당).

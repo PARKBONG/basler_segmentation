@@ -83,6 +83,13 @@ public sealed class CameraService : IDisposable
         if (_camera == null || config.FrameRate <= 0) return;
         var p = _camera.Parameters;
 
+        // 0) Full-sensor ROI. The app never crops in hardware any more (the live view
+        //    shows the whole frame and FrameCropper handles the 640×640 window in
+        //    software), but the camera keeps whatever ROI was last written to it —
+        //    an older build set 640×640 here, and that stays until overwritten or the
+        //    camera is power-cycled. Reset explicitly so the grab is always full size.
+        ResetRoiToFullSensor();
+
         double periodUs = 1_000_000.0 / config.FrameRate; // frame period at target fps
 
         // 1) A fixed exposure that fits inside the frame period (10% headroom for
@@ -95,6 +102,37 @@ public sealed class CameraService : IDisposable
         try { p[PLCamera.AcquisitionFrameRateEnable].SetValue(true); }
         catch (Exception ex) { StatusChanged?.Invoke("FrameRateEnable set failed: " + ex.Message); }
         SetFrameRate(config.FrameRate);
+    }
+
+    /// <summary>Restore the hardware ROI (OffsetX/OffsetY/Width/Height) to the whole
+    /// sensor. Offsets go to their minimum first, because a non-zero offset caps the
+    /// largest Width/Height the camera will accept; sizes then go to their maximum.
+    /// Read-only nodes (some models lock the ROI while grabbing) are reported, not fatal.</summary>
+    private void ResetRoiToFullSensor()
+    {
+        var p = _camera!.Parameters;
+        try
+        {
+            var ox = p[PLCamera.OffsetX];
+            var oy = p[PLCamera.OffsetY];
+            var w = p[PLCamera.Width];
+            var h = p[PLCamera.Height];
+
+            try { ox.SetValue(ox.GetMinimum()); } catch { /* may be locked until size shrinks */ }
+            try { oy.SetValue(oy.GetMinimum()); } catch { }
+
+            w.SetValue(w.GetMaximum());
+            h.SetValue(h.GetMaximum());
+
+            // Retry the offsets now that the size is known; at full size their travel
+            // is zero so this is a no-op on cameras that accepted the first write.
+            try { ox.SetValue(ox.GetMinimum()); } catch { }
+            try { oy.SetValue(oy.GetMinimum()); } catch { }
+        }
+        catch (Exception ex)
+        {
+            StatusChanged?.Invoke("ROI reset to full sensor failed: " + ex.Message);
+        }
     }
 
     /// <summary>Set the acquisition frame rate (fps), clamped to the camera's
@@ -269,6 +307,8 @@ public sealed class CameraService : IDisposable
 
         var parts = new List<string>
         {
+            Get("ROI", () => $"{p[PLCamera.Width].GetValue()}x{p[PLCamera.Height].GetValue()}" +
+                             $"+{p[PLCamera.OffsetX].GetValue()}+{p[PLCamera.OffsetY].GetValue()}"),
             Get("ExposureAuto",         () => p[PLCamera.ExposureAuto].GetValue()),
             Get("ExposureTime(us)",     ExposureUs),
             Get("FrameRateEnable",      () => p[PLCamera.AcquisitionFrameRateEnable].GetValue().ToString()),

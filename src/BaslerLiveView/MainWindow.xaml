@@ -21,6 +21,9 @@
                     <Separator Margin="10,0" Width="1" Background="#555"/>
                     <CheckBox x:Name="SegmentCheck" Content="Segmentation" Foreground="#DDD" VerticalAlignment="Center"
                               Checked="Segment_Toggled" Unchecked="Segment_Toggled"/>
+                    <CheckBox x:Name="RefOverlayCheck" Content="Ref" Foreground="#DDD" VerticalAlignment="Center" Margin="10,0,0,0"
+                              ToolTip="Show the reference cutout (fixed tube + wire) over the live view"
+                              Checked="RefOverlay_Toggled" Unchecked="RefOverlay_Toggled"/>
                     <Separator Margin="10,0" Width="1" Background="#555"/>
                     <ToggleButton x:Name="RecordButton" Padding="10,4" Foreground="#F55" FontWeight="Bold"
                                   Content="● REC" ToolTip="Save the cropped frames as PNGs for training"
@@ -70,6 +73,14 @@
              rectangle rather than actually cutting the view. -->
         <Grid x:Name="ViewHost" Background="Black" ClipToBounds="True" SizeChanged="ViewHost_SizeChanged">
             <Image x:Name="LiveImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="LowQuality"/>
+            <!-- Reference cutout of the fixed rig (metal tube + wire), semi-transparent
+                 on top of the live view. Same Uniform stretch as LiveImage: the cutout
+                 is a full-sensor-size RGBA, so both letterbox to the same rectangle. -->
+            <Image x:Name="RefOverlayImage" Stretch="Uniform" IsHitTestVisible="False"
+                   RenderOptions.BitmapScalingMode="LowQuality" Visibility="Collapsed"/>
+            <!-- Green outline of the same silhouette, kept crisper than the fill. -->
+            <Image x:Name="RefOutlineImage" Stretch="Uniform" IsHitTestVisible="False"
+                   RenderOptions.BitmapScalingMode="LowQuality" Visibility="Collapsed"/>
             <Canvas x:Name="OverlayCanvas" IsHitTestVisible="False">
                 <!-- Dark under-stroke first, so the bright outline stays readable on
                      both blown-out and near-black backgrounds. -->

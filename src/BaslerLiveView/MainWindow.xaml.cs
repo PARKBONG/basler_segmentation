@@ -81,6 +81,8 @@ public partial class MainWindow : Window
         _cropUiReady = true;
         ApplyCropSettings();
 
+        LoadReferenceOverlay();
+
         _camera.StatusChanged += msg => Dispatcher.BeginInvoke(() => StatusText.Text = msg);
         _camera.ErrorOccurred += ex => Dispatcher.BeginInvoke(() => StatusText.Text = "Error: " + ex.Message);
         _camera.FrameReady += OnFrameReady;
@@ -185,6 +187,65 @@ public partial class MainWindow : Window
         StartButton.IsEnabled = true;
         StopButton.IsEnabled = false;
         FpsText.Text = "";
+    }
+
+    // --- Reference overlay ------------------------------------------------
+
+    /// <summary>
+    /// Load the reference cutout (the fixed rig — metal tube + wire — cut out of
+    /// datasets/reference.png by tools/make_reference_cutout.py) and show it over the
+    /// live view. Eye-in-hand camera → the rig occupies the same pixels in every
+    /// frame, so a static overlay lines up; only the wire's length differs from the
+    /// reference shot. A missing file just leaves the checkbox disabled.
+    /// </summary>
+    private void LoadReferenceOverlay()
+    {
+        // Two layers from tools/make_reference_cutout.py: the faint cutout fill and
+        // the crisp green silhouette outline. Each is optional — whatever file
+        // exists is shown; with neither present the checkbox is disabled.
+        RefOverlayImage.Opacity = _config.OverlayOpacity;
+        RefOutlineImage.Opacity = _config.OutlineOpacity;
+        bool fill = TryLoadOverlayLayer(RefOverlayImage, _config.OverlayPath);
+        bool line = TryLoadOverlayLayer(RefOutlineImage, _config.OutlinePath);
+
+        if (!fill && !line)
+        {
+            RefOverlayCheck.IsEnabled = false;
+            RefOverlayCheck.ToolTip = "Reference cutout not found — generate it with tools\\make_reference_cutout.py";
+            return;
+        }
+        RefOverlayCheck.IsChecked = _config.OverlayEnabled; // handler sets visibility
+    }
+
+    /// <summary>Load one overlay PNG into <paramref name="target"/>; false if the
+    /// file is missing or unreadable (the layer then simply stays hidden).</summary>
+    private bool TryLoadOverlayLayer(Image target, string configuredPath)
+    {
+        var path = FrameRecorder.ResolveDirectory(configuredPath);
+        if (!File.Exists(path)) return false;
+        try
+        {
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.UriSource = new Uri(path);
+            bmp.CacheOption = BitmapCacheOption.OnLoad; // read fully now; don't lock the file
+            bmp.EndInit();
+            bmp.Freeze();
+            target.Source = bmp;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Reference overlay load failed ({Path.GetFileName(path)}): {ex.Message}";
+            return false;
+        }
+    }
+
+    private void RefOverlay_Toggled(object sender, RoutedEventArgs e)
+    {
+        bool on = RefOverlayCheck.IsChecked == true;
+        RefOverlayImage.Visibility = on && RefOverlayImage.Source != null ? Visibility.Visible : Visibility.Collapsed;
+        RefOutlineImage.Visibility = on && RefOutlineImage.Source != null ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // --- Crop -------------------------------------------------------------
