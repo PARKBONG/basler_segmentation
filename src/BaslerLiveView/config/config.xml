@@ -9,7 +9,7 @@
     <!-- 목표 프레임레이트(fps). 카메라 AcquisitionFrameRate 로 고정합니다.
          이 fps가 실제로 나오도록 노출 시간(ExposureTime)도 프레임 주기(1/FrameRate)
          안에 들어가게 앱이 자동으로 맞춥니다. 값을 낮추면 노출 여유가 생겨 더 밝아집니다. -->
-    <FrameRate>5</FrameRate>
+    <FrameRate>50</FrameRate>
   </Camera>
   <Segmentation>
     <!-- 사용할 ONNX 세그멘테이션 모델 파일 이름. 실행 파일 옆 Models\ 폴더에서 찾습니다.
