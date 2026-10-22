@@ -18,6 +18,7 @@ labeller/  →  preprocess.py  →  train.py (single)  →  eval.py  →  train.
 | `eval.py` | checkpoint 를 지정 split 에서 평가 + 정답/추론 겹친 그림 |
 | `infer.py` | 사진 한 장 → 예측 그림, 세션 폴더 → 동영상 |
 | `epoch_overlay.py` | 학습 중 매 val 마다 원본 4장 + 증강 12장 추론 격자 |
+| `render.py` | 추론 그림 (bbox 없이 옅은 마스크·윤곽, 왼쪽 아래 클래스·점수) — infer · overlay 공용 |
 | `augment.py` | Ultralytics 키로 못 내는 증강 — 밝기 배율 · 블러 |
 | `common.py` | config 로드(+ `base:` 상속) · 경로 해석 · 로그 |
 | `tools/make_reference_cutout.py` | 기구부 기준 이미지 → 누끼·윤곽선 (앱·라벨러 오버레이) |

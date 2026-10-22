@@ -11,7 +11,7 @@
 - 결과는 runs/infer/<YYMMDD_HHMMSS>/ — 사진은 <이름>_pred.jpg, 세션은 <세션>.mp4.
 - 경로는 적은 그대로 먼저, 없으면 training/ 기준으로 찾는다. weights 는 타임스탬프를 뺀
   runs/<…>/<name>/weights/best.pt 로 적으면 그 name 의 최신 실행 (resolve_weights).
-- seg / obb 모델 모두 — 그림은 Ultralytics 의 plot() 그대로.
+- seg / obb 모델 모두 — 그림은 render.py (bbox 없이 마스크·OBB 윤곽, 왼쪽 아래 클래스·점수).
 """
 from __future__ import annotations
 
@@ -92,6 +92,8 @@ def main() -> None:
 
     from ultralytics import YOLO
 
+    from render import render
+
     model = YOLO(str(weights))
     print(f"[infer] 가중치: {weights}")
     print(f"[infer] 입력: {source} ({len(files)}장)  크롭: "
@@ -106,10 +108,8 @@ def main() -> None:
         return im
 
     def draw(r, name: str):
-        im = r.plot()
-        n = len(r.masks) if r.masks is not None else len(r.obb) if r.obb is not None else len(r.boxes)
-        cv2.putText(im, f"{name}  det {n}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
-                    (0, 255, 255), 2, cv2.LINE_AA)
+        im = render(r)
+        cv2.putText(im, name, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
         return im
 
     kw = dict(imgsz=args.imgsz, conf=args.conf, verbose=False)

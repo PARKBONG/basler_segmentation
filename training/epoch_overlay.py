@@ -5,7 +5,7 @@
 
   행 = val 원본 한 장(val 전체에서 고르게 4장 — 세션이 섞이게)
   열 = [원본, 증강 1, 증강 2, 증강 3]  — 각 칸 위에 그 칸의 증강 값을 적음
-  초록 선 = 정답 폴리곤 (증강 칸은 같은 변환을 적용해 옮긴 것), 그 위가 모델 추론(마스크·박스)
+  초록 선 = 정답 폴리곤 (증강 칸은 같은 변환을 적용해 옮긴 것), 그 위가 모델 추론(옅은 마스크·윤곽, 왼쪽 아래 점수)
 
 증강은 학습 config 와 같은 범위(degrees · translate · scale · shear · perspective · hsv_v ·
 brightness · blur)에서 여기서 직접
@@ -29,6 +29,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import render
 from augment import log_uniform
 from common import IMG_EXTS
 
@@ -36,8 +37,6 @@ ROWS, AUGS = 4, 3   # 원본 4장 × (원본 + 증강 3) = 4×4
 TILE = 360          # 격자 한 칸(px)
 CONF = 0.25         # 이 점수 미만 예측은 그리지 않음
 PAD = 114           # 증강으로 생긴 빈 곳 채움 (Ultralytics 와 같은 회색)
-MASK_ALPHA = 0.25   # 추론 마스크 채움 불투명도 (Ultralytics 기본 0.5 는 원본을 가림)
-MASK_BGR = (255, 42, 4)   # Ultralytics 0번 클래스 색(파랑)
 
 
 def _val_images(data: dict, n: int) -> list:
@@ -112,19 +111,9 @@ def _augment(img: np.ndarray, polys: list, hyp: dict, rng: random.Random,
     return out, polys, text
 
 
-def _plot(r) -> np.ndarray:
-    """추론 그림 — 박스·점수는 Ultralytics 그대로, 마스크만 옅게(MASK_ALPHA) + 윤곽선."""
-    plot = r.plot(masks=False)
-    if r.masks is not None and len(r.masks):
-        polys = [p.astype(np.int32) for p in r.masks.xy if len(p) >= 3]
-        fill = plot.copy()
-        cv2.fillPoly(fill, polys, MASK_BGR)
-        plot = cv2.addWeighted(fill, MASK_ALPHA, plot, 1 - MASK_ALPHA, 0)
-        cv2.polylines(plot, polys, True, MASK_BGR, max(1, plot.shape[1] // 600), cv2.LINE_AA)
-    return plot
-
-
-def _tile(plot: np.ndarray, polys: list, text: str) -> np.ndarray:
+def _tile(r, polys: list, text: str) -> np.ndarray:
+    """추론(render.shapes) + 정답 선 → TILE 크기 칸, 위에 증강 값 · 왼쪽 아래 클래스·점수."""
+    plot = render.shapes(r)
     for p in polys:   # 정답 — 추론 그림 위에 초록 선
         cv2.polylines(plot, [p.astype(np.int32)], True, (0, 255, 0),
                       max(2, plot.shape[1] // 300), cv2.LINE_AA)
@@ -135,7 +124,7 @@ def _tile(plot: np.ndarray, polys: list, text: str) -> np.ndarray:
     for i, line in enumerate(lines):
         cv2.putText(t, line, (4, (th + 6) * i + th + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.38,
                     (0, 255, 255), 1, cv2.LINE_AA)
-    return t
+    return render.put_labels(t, render.labels(r), scale=0.4)
 
 
 def callback(blur: dict | None = None, brightness: dict | None = None, seed: int = 0):
@@ -176,7 +165,7 @@ def callback(blur: dict | None = None, brightness: dict | None = None, seed: int
         model = YOLO(str(weights))
         results = model.predict([im for im, _, _ in inputs], imgsz=trainer.args.imgsz,
                                 device=str(trainer.device), conf=CONF, verbose=False)
-        tiles = [_tile(_plot(r), polys, text) for r, (_, polys, text) in zip(results, inputs)]
+        tiles = [_tile(r, polys, text) for r, (_, polys, text) in zip(results, inputs)]
         cols = AUGS + 1
         rows = math.ceil(len(tiles) / cols)
         sheet = np.zeros((rows * TILE, cols * TILE, 3), np.uint8)
