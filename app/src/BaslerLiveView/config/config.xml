@@ -33,8 +33,8 @@
     <Height>1280</Height>
     <!-- 크롭 창의 위치(%). 0 = 왼쪽/위 끝, 100 = 오른쪽/아래 끝, 50 = 중앙.
          앱 실행 중에는 툴바 슬라이더로 바로 조절할 수 있고, 여기 값은 시작값입니다. -->
-    <CenterX>40</CenterX>
-    <CenterY>40</CenterY>
+    <CenterX>50</CenterX>
+    <CenterY>50</CenterY>
   </Crop>
   <ReferenceOverlay>
     <!-- 기구부(금속 튜브 + 와이어) 누끼 오버레이. 카메라가 eye-in-hand 라서

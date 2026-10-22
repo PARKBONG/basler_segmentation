@@ -46,6 +46,9 @@ __pycache__/
 # ----------------------------------------------------------------------------
 app/src/**/bin/
 app/src/**/obj/
+# 구 구조(main 의 src/) 빌드 산출물 — 브랜치 전환 후 남는 bin/obj 무시
+/src/**/bin/
+/src/**/obj/
 
 # ONNX models — not committed; the default is auto-copied from the YoloDotNet
 # submodule's assets at build time (see BaslerLiveView.csproj).
