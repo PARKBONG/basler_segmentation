@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using SkiaSharp;
@@ -31,6 +32,10 @@ public sealed class InferenceService : IDisposable
     private readonly AutoResetEvent _frameSignal = new(false);
     private readonly object _lock = new();
 
+    // The rig has exactly one wire in view. YOLO26 can still emit a second, overlapping
+    // instance of it (IoU below the NMS threshold) — keep only the most confident one.
+    private const int MaxDetections = 1;
+
     // Latest submitted frame, owned by this service (copied out of the reused camera buffer).
     private byte[] _pending = Array.Empty<byte>();
     private int _pendingWidth;
@@ -38,8 +43,17 @@ public sealed class InferenceService : IDisposable
     private bool _hasPending;
     private volatile bool _running = true;
 
+    // Worker-thread buffers, reused across frames: a crop is ~6.5 MB (1280×1280 BGRA), and
+    // allocating that per frame lands on the Large Object Heap, which is only reclaimed by
+    // full (gen2) GCs — at tens of frames per second those show up as stutters.
+    private SKBitmap? _bitmap;
+    private readonly byte[][] _outputs = { Array.Empty<byte>(), Array.Empty<byte>() };
+    private int _nextOutput;
+
     /// <summary>Raised per processed frame: (width, height, annotatedBgraBuffer).
-    /// The buffer belongs to the caller after the event (a fresh array per frame).</summary>
+    /// Two output buffers alternate, so a buffer stays valid only until the next event —
+    /// the receiver must drop its reference to the previous one by the time the handler
+    /// returns (MainWindow swaps it under its overlay lock).</summary>
     public event Action<int, int, byte[]>? FrameProcessed;
 
     /// <summary>Raised for inference failures on the worker thread.</summary>
@@ -139,22 +153,28 @@ public sealed class InferenceService : IDisposable
             _frameSignal.WaitOne();
             if (!_running) return;
 
-            int width, height, needed;
-            byte[] frame;
+            int width, height;
+            SKBitmap bitmap;
             lock (_lock)
             {
                 if (!_hasPending) continue;
                 _hasPending = false;
                 width = _pendingWidth;
                 height = _pendingHeight;
-                needed = width * height * 4;
-                frame = new byte[needed];
-                Buffer.BlockCopy(_pending, 0, frame, 0, needed);
+                if (_bitmap == null || _bitmap.Width != width || _bitmap.Height != height)
+                {
+                    // Camera frames are BGRA8 packed, which maps directly onto Skia's
+                    // Bgra8888 memory layout — no channel conversion needed.
+                    _bitmap?.Dispose();
+                    _bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+                }
+                bitmap = _bitmap;
+                Marshal.Copy(_pending, 0, bitmap.GetPixels(), width * height * 4);
             }
 
             try
             {
-                byte[] annotated = RunInference(width, height, frame);
+                byte[] annotated = RunInference(bitmap);
                 FrameProcessed?.Invoke(width, height, annotated);
             }
             catch (Exception ex)
@@ -164,29 +184,30 @@ public sealed class InferenceService : IDisposable
         }
     }
 
-    private byte[] RunInference(int width, int height, byte[] bgra)
+    private byte[] RunInference(SKBitmap bitmap)
     {
-        // Camera frames are BGRA8 packed, which maps directly onto Skia's Bgra8888
-        // memory layout — no channel conversion needed. Alpha is fully opaque.
-        var info = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
-        using var bitmap = new SKBitmap(info);
-        Marshal.Copy(bgra, 0, bitmap.GetPixels(), bgra.Length);
-
         // Draw() mutates the SKBitmap in place, overlaying masks / rotated boxes + labels.
         if (ModelTask == ModelType.ObbDetection)
         {
-            var results = _yolo.RunObbDetection(bitmap, confidence: 0.24, iou: 0.7);
+            var results = _yolo.RunObbDetection(bitmap, confidence: 0.24, iou: 0.7)
+                .OrderByDescending(r => r.Confidence).Take(MaxDetections);
             bitmap.Draw(results, (DetectionDrawingOptions)_drawing);
         }
         else
         {
-            var results = _yolo.RunSegmentation(bitmap, confidence: 0.24, pixelConfedence: 0.5, iou: 0.7);
+            var results = _yolo.RunSegmentation(bitmap, confidence: 0.24, pixelConfedence: 0.5, iou: 0.7)
+                .OrderByDescending(r => r.Confidence).Take(MaxDetections);
             bitmap.Draw(results, _drawing);
         }
 
-        // Read the annotated pixels back out (still Bgra8888) for the WriteableBitmap.
-        var annotated = new byte[bgra.Length];
-        Marshal.Copy(bitmap.GetPixels(), annotated, 0, annotated.Length);
+        // Read the annotated pixels back out (still Bgra8888) into the output buffer the
+        // receiver is not holding (see FrameProcessed).
+        int size = bitmap.ByteCount;
+        ref byte[] annotated = ref _outputs[_nextOutput];
+        if (annotated.Length != size)
+            annotated = new byte[size];
+        Marshal.Copy(bitmap.GetPixels(), annotated, 0, size);
+        _nextOutput ^= 1;
         return annotated;
     }
 
@@ -194,8 +215,10 @@ public sealed class InferenceService : IDisposable
     {
         _running = false;
         _frameSignal.Set();
-        _worker.Join(TimeSpan.FromSeconds(2));
+        bool stopped = _worker.Join(TimeSpan.FromSeconds(2));
         _frameSignal.Dispose();
         _yolo.Dispose();
+        if (stopped)
+            _bitmap?.Dispose();   // still in use if the worker is stuck in inference
     }
 }

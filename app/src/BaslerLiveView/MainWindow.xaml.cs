@@ -428,8 +428,10 @@ public partial class MainWindow : Window
         return _composed;
     }
 
-    // Raised on the segmentation worker thread with a fresh (owned) buffer. It is not
-    // rendered directly: display is driven entirely by the grab loop, which pastes
+    // Raised on the segmentation worker thread. The service alternates two output buffers,
+    // so the previous one is reused as soon as this returns — swapping the reference under
+    // _overlayLock (which Compose also holds while reading) is what keeps that safe. It is
+    // not rendered directly: display is driven entirely by the grab loop, which pastes
     // this in at the crop window's position (see Compose).
     private void OnInferredFrame(int width, int height, byte[] bgra)
     {
