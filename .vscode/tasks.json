@@ -4,8 +4,8 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "training: train",
-      "detail": "configs/train.*.yaml 하나를 골라 학습 (+ export)",
+      "label": "train",
+      "detail": "choose configs/train.*.yaml",
       "type": "process",
       "command": "uv",
       "args": ["run", "--extra", "train", "--extra", "export", "train.py", "--config", "${input:trainConfig}"],
@@ -13,7 +13,7 @@
       "problemMatcher": []
     },
     {
-      "label": "training: inference — 사진 1장",
+      "label": "inference — picture",
       "detail": "크롭 → 예측 그림 (runs/infer/<시각>/<이름>_pred.jpg)",
       "type": "process",
       "command": "uv",
@@ -23,7 +23,7 @@
       "problemMatcher": []
     },
     {
-      "label": "training: inference — 세션 → 동영상",
+      "label": "inference — movie",
       "detail": "세션 폴더의 전 프레임 → 동영상 (runs/infer/<시각>/<세션>.mp4)",
       "type": "process",
       "command": "uv",
@@ -34,7 +34,16 @@
       "problemMatcher": []
     },
     {
-      "label": "training: tensorboard",
+      "label": "archive — weights/ 에 보관",
+      "detail": "runs/ 의 실행 하나를 저장소 루트 weights/<name>/<시각>/ 로 복사 (best·last·onnx·args·run_info, Git LFS)",
+      "type": "process",
+      "command": "uv",
+      "args": ["run", "--extra", "train", "--extra", "export", "archive.py", "${input:archiveRun}"],
+      "options": { "cwd": "${workspaceFolder}/training" },
+      "problemMatcher": []
+    },
+    {
+      "label": "tensorboard",
       "detail": "http://localhost:6006 — runs/ 아래 모든 학습 (멈출 땐 터미널 휴지통)",
       "type": "process",
       "command": "uv",
@@ -62,8 +71,8 @@
       "type": "command",
       "command": "extension.commandvariable.file.pickFile",
       "args": {
-        "description": "가중치 (runs/<task>/<name>/<시각>/weights/*.pt) — 입력해서 거르기",
-        "include": "training/runs/**/weights/*.pt",
+        "description": "가중치 (runs/<task>/… 또는 보관한 weights/…) — 입력해서 거르기",
+        "include": "{training/runs,weights}/**/weights/*.pt",
         "display": "transform",
         "valueTransform": { "text": "${file}" },
         "labelTransform": {
@@ -74,6 +83,24 @@
           ]
         },
         "keyRemember": "weights"
+      }
+    },
+    {
+      "id": "archiveRun",
+      "type": "command",
+      "command": "extension.commandvariable.file.pickFile",
+      "args": {
+        "description": "보관할 실행 (그 실행의 best.pt 를 고름)",
+        "include": "training/runs/**/weights/best.pt",
+        "display": "transform",
+        "valueTransform": { "text": "${file}" },
+        "labelTransform": {
+          "text": "${relativeFile}",
+          "apply": [
+            { "find": "\\\\", "replace": "/", "flags": "g" },
+            { "find": "^training/runs/(.*)/weights/best\\.pt$", "replace": "$1" }
+          ]
+        }
       }
     },
     {
