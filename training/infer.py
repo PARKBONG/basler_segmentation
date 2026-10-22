@@ -11,7 +11,9 @@
 - 결과는 runs/infer/<YYMMDD_HHMMSS>/ — 사진은 <이름>_pred.jpg, 세션은 <세션>.mp4.
 - 경로는 적은 그대로 먼저, 없으면 training/ 기준으로 찾는다. weights 는 타임스탬프를 뺀
   runs/<…>/<name>/weights/best.pt 로 적으면 그 name 의 최신 실행 (resolve_weights).
-- seg / obb 모델 모두 — 그림은 render.py (bbox 없이 마스크·OBB 윤곽, 왼쪽 아래 클래스·점수).
+- seg / obb 모델 모두 — 그림은 render.py (bbox 없이 마스크·OBB 윤곽). 왼쪽 위에 파일명과
+  검출마다 클래스·점수·와이어 끝점(OBB 아랫변 중점, 그림에 점) 픽셀 좌표 — 크롭 기준, 크롭했으면
+  원본(풀 프레임) 좌표도. 장치에 와이어는 하나라 기본 --max-det 1 (겹친 중복 검출 제거).
 """
 from __future__ import annotations
 
@@ -75,6 +77,7 @@ def main() -> None:
     ap.add_argument("--crop", default="auto", help="'W H CX CY' / auto = preprocess.yaml / none")
     ap.add_argument("--conf", type=float, default=0.25)
     ap.add_argument("--imgsz", type=int, default=640)
+    ap.add_argument("--max-det", type=int, default=1, help="한 장에 남길 최대 검출 수 (와이어는 하나)")
     ap.add_argument("--fps", type=float, default=5, help="세션 동영상 fps")
     ap.add_argument("--out", default="", help="결과 폴더 (기본 runs/infer/<시각>/)")
     args = ap.parse_args()
@@ -92,7 +95,7 @@ def main() -> None:
 
     from ultralytics import YOLO
 
-    from render import render
+    import render
 
     model = YOLO(str(weights))
     print(f"[infer] 가중치: {weights}")
@@ -100,19 +103,33 @@ def main() -> None:
           + (f"{crop['width']}×{crop['height']} @ ({crop['center_x']}%, {crop['center_y']}%)"
              if crop else "없음"))
 
+    offset = [0, 0]   # 크롭 왼쪽 위의 원본 좌표 — 끝점을 풀 프레임 좌표로도 적으려고
+
     def load(p: Path):
         im = cv2.imread(str(p))
         if crop:
             x, y, w, h = crop_rect(im.shape[1], im.shape[0], crop)
+            offset[:] = [x, y]
             im = im[y:y + h, x:x + w]
         return im
 
     def draw(r, name: str):
-        im = render(r)
-        cv2.putText(im, name, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
-        return im
+        im = render.shapes(r)
+        items = [(name, None)]
+        for d in render.detections(r):
+            text = f"{d['name']} {d['conf']:.2f}"
+            if d["tip"] is not None:
+                x, y = d["tip"]
+                render.draw_tip(im, d["tip"], d["color"])
+                text += f"  tip ({x:.1f}, {y:.1f})"
+                if crop:
+                    text += f"  full ({x + offset[0]:.1f}, {y + offset[1]:.1f})"
+            items.append((text, d["color"]))
+        if len(items) == 1:
+            items.append(("no detection", None))
+        return render.put_labels(im, items, top=True)
 
-    kw = dict(imgsz=args.imgsz, conf=args.conf, verbose=False)
+    kw = dict(imgsz=args.imgsz, conf=args.conf, max_det=args.max_det, verbose=False)
     if len(files) == 1:
         r = model.predict([load(files[0])], **kw)[0]
         dst = out / f"{files[0].stem}_pred.jpg"
