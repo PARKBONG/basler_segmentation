@@ -1,0 +1,174 @@
+# 전처리 설정 — 하나뿐이라 인자 없이 자동으로 읽힙니다:  python preprocess.py
+#
+# 전처리에는 스테이지가 없습니다. 소스마다 datasets/raw/<이름>/ 을
+# datasets/processed_seg/<이름>/ 으로 한 번 굽고, 스테이지 구분(공개 warm-up →
+# in-domain 적응)은 train.*.yaml / eval.*.yaml 이 "어느 소스의 data.yaml 을
+# 읽을지"로 정합니다:
+#   processed_seg/<이름>/data.yaml      소스 하나짜리
+#   processed_seg/<이름>/data.all.yaml  그 소스 train+val+test 전부 (배포용 학습 train.*_all)
+#   processed_seg/data.yaml             디스크의 소스 전체를 묶은 통합본 (train.single)
+# OBB 산출물은 같은 소스 정의로 따로 굽는다 (out 이 processed_obb/):
+#   python preprocess.py --task obb --out ../datasets/processed_obb
+# 경로는 이 yaml(=training/ 폴더) 기준 상대경로 또는 절대경로.
+#
+# 소스 인자:
+#   path        소스 폴더 (data.yaml + images/… + labels/…). 마지막 칸에 글롭(* ? [])을
+#               쓰면 매칭되는 폴더 전부(images/ 가 있는 것만)를 이 소스 하나로 묶습니다
+#   names       (선택) 원본 클래스 이름 — 폴더에 data.yaml 이 없을 때만 씁니다
+#   labels      (선택) 라벨 폴더 이름 — images/ 와 나란한 폴더. 기본 labels
+#   class_map   소스클래스명 → 최종클래스명 (여기 없는 소스 클래스는 제외)
+#   val_ratio   이 소스에서 val 로 뗄 비율 (그룹 단위 분할 → 근중복 누수 없음)
+#   test_ratio  최종 1회 평가용 test 비율 (eval.final.yaml)
+#   group_by    분할 그룹. file(기본) = 파일 단위(rf 증강 사본은 원본 단위로 묶음),
+#               session = 글롭으로 묶인 폴더(녹화 세션) 통째로 한 split 에 — 연속 프레임
+#               근중복 누수 방지. 세션 크기가 제각각이라 비율은 근사이고 배정은 로그로 남김
+#   val_sessions / test_sessions
+#               (group_by: session 일 때, 선택) 세션 폴더 이름을 직접 지정 — 그 split 은
+#               비율 대신 이것. 하나만 적으면 나머지 하나는 비율로 남은 세션에서 고름
+#   oversample  train 강조 배수 (val/test 에는 적용 안 됨)
+#   crop        이미지+폴리곤 라벨을 함께 크롭 (소스마다 독립, 공유 기본값 없음)
+#   resize      크롭 후 리사이즈. null 이면 그대로 (학습이 imgsz 로 letterbox 함)
+
+targets: [kimm]   # 여기 적은 소스만 다시 굽기 (다른 소스 산출물은 유지). 평소엔 주석.
+# targets: [rf_a, rf_b, rf_c, rf_d, rf_e]   # 여기 적은 소스만 다시 굽기 (다른 소스 산출물은 유지). 평소엔 주석.
+
+# 최종 통합 클래스 — index가 최종 class id. class_map의 목적지 이름은 반드시 여기 존재해야 함.
+names:
+  0: wire
+
+seed: 0    # 분할 시드 — 소스별로 파생되므로 소스를 추가/제거해도 다른 소스의 분할이 안 바뀜
+
+# 산출물에서 몇 장을 골라 라벨 폴리곤을 그려 소스별 preview/ 에 저장합니다 (소스당 count 장).
+preview:
+  enabled: true
+  count: 12
+
+# 산출 라벨 형식. obb = seg 폴리곤을 회전 사각형(꼭지점 4개)으로 변환해 저장,
+# seg = 폴리곤 그대로. 앱(BaslerLiveView)이 seg 모델(RunSegmentation)로 추론하므로 seg.
+task: seg
+
+out: ../datasets/processed_seg   # 소스별로 out/<이름>/ 에 굽습니다
+
+sources:
+  # ── 내 카메라 원본 (비공개, 인도메인 = 귀중) ─────────────────────────
+  #   앱(BaslerLiveView)의 REC 가 녹화 세션마다 raw/kimm_YYMMDD_HHMMSS[_메모]/images/
+  #   에 크롭 전 풀사이즈 PNG 를 쌓습니다. path 의 글롭(마지막 칸만)이 그 세션 폴더
+  #   전부를 이 소스 하나로 묶습니다 — 세션이 늘어도 여기는 그대로 둡니다.
+  #   라벨러(labeller/server.py --source kimm)가 세션 폴더마다 손으로 잡은 OBB 를 labels/,
+  #   그 OBB + 끝 경계로 만든 와이어 폴리곤을 labels_seg/ 에 씁니다. 학습은 labels_seg/.
+  #   (seg 가 없는 장은 빠집니다.) 쓰기 싫은 세션은 폴더 이름을 kimm_ 로 시작하지 않게.
+  - name: kimm
+    path: ../datasets/raw/kimm_*
+    labels: labels_seg           # 라벨 폴더 (기본 labels) — 라벨러가 저장한 seg 폴리곤
+    names: {0: wire}             # 세션 폴더에 data.yaml 이 없을 때 쓰는 원본 클래스 이름
+    class_map:
+      wire: wire
+    # 세션 통째로 train/val/test 중 하나에 — 2fps 연속 캡처라 파일 단위로 나누면 val/test 가
+    # train 의 근중복이 됩니다. 아래 비율은 "라벨된 장수" 기준 근사 (세션 배정은 로그 확인).
+    group_by: session
+    val_ratio: 0.2               # val_sessions/test_sessions 를 지정해서 지금은 안 쓰임
+    test_ratio: 0.1
+    # 세션 직접 지정 — 비율로 자동 배정하면 세션 크기가 너무 불균형해(hollow 두 세션이 65%)
+    # train 에 hollow 두 세션만 남고 10/14·격자 장면을 학습에서 못 봄. 장면 묶음
+    # (10/14 · 10/19 격자 · 10/20 hollow)이 train 에 모두 들어가게 골랐음.
+    # hollow 는 val/test 에 없음 → hollow 성능은 따로 재지 않음.
+    val_sessions:                # 808장 (11%)
+      - kimm_261019_160703_격자실험4
+      - kimm_261014_183709
+      - kimm_261019_153805
+    test_sessions:               # 540장 (7%) — 최종 1회 평가용 (eval.final.yaml)
+      - kimm_261019_161818
+      - kimm_261014_182249
+      - kimm_261014_174102
+    oversample: 1
+    crop:
+      enabled: true
+      # 크롭 창 크기(픽셀). 0 이면 그 축은 원본 전체를 씁니다.
+      # 원본보다 큰 값을 적으면 원본 크기로 클램프됩니다.
+      width: 1280
+      height: 1280
+      # 창 위치(%). 앱 FrameCropper 와 같은 규약: 0 = 왼쪽/위 끝, 50 = 중앙,
+      # 100 = 오른쪽/아래 끝 → 앱 툴바 슬라이더에서 찾은 값을 그대로 옮겨 적으세요.
+      center_x: 50
+      center_y: 50
+      # 자동 크롭 — 창의 중심·크기를 이미지마다 라벨(wire)에서 직접 잡습니다.
+      # 켜면 위의 width/height/center_x/center_y 는 무시됩니다.
+      auto_crop:
+        enabled: false
+        margin: 0.25             # 라벨 주위 여유 (경계상자 크기 대비 비율)
+        min_size: 640            # 창 한 변의 하한 = 경고 기준선
+      # 크롭 후 남은 폴리곤 면적/원래 면적이 이 값 미만이면 인스턴스 폐기.
+      min_area: 0.10
+    resize: null
+    type: seg                    # labels_seg/ 는 폴리곤
+
+  # ── 공개 데이터셋 (보조) — download.py(configs/download.yaml)로 먼저 받아두세요 ──
+  - name: rf_a
+    path: ../datasets/raw/rf_a
+    class_map:
+      # 이 소스의 클래스는 [melt pool, seam, torch, wire] — 그중 wire 만 쓰고
+      # 나머지는 버립니다. 이름이 다르면 개명해서 통일 (예: cable: wire).
+      wire: wire
+    val_ratio: 0.1               # stage1(공개 warm-up) 학습의 선택 지표용 공개 val
+    test_ratio: 0.1              # 최종 1회 평가용 공개 test (eval.final.yaml)
+    oversample: 1
+    crop:
+      enabled: false             # 공개셋은 이미 잘려 있음
+    resize: null
+    type: seg
+
+  - name: rf_b
+    path: ../datasets/raw/rf_b # 중복
+    class_map:
+      # 이 소스의 클래스는 [melt pool, seam, torch, wire] — 그중 wire 만 쓰고
+      # 나머지는 버립니다. 이름이 다르면 개명해서 통일 (예: cable: wire).
+      wire: wire
+    val_ratio: 0.1               # stage1(공개 warm-up) 학습의 선택 지표용 공개 val
+    test_ratio: 0.1              # 최종 1회 평가용 공개 test (eval.final.yaml)
+    oversample: 1
+    crop:
+      enabled: false             # 공개셋은 이미 잘려 있음
+    resize: null
+    type: seg
+
+  - name: rf_c
+    path: ../datasets/raw/rf_c # 중복
+    class_map:
+      # 이 소스의 클래스는 [melt pool, seam, torch, wire] — 그중 wire 만 쓰고
+      # 나머지는 버립니다. 이름이 다르면 개명해서 통일 (예: cable: wire).
+      Draht: wire
+    val_ratio: 0.1               # stage1(공개 warm-up) 학습의 선택 지표용 공개 val
+    test_ratio: 0.1              # 최종 1회 평가용 공개 test (eval.final.yaml)
+    oversample: 1
+    crop:
+      enabled: false             # 공개셋은 이미 잘려 있음
+    resize: null
+    type: seg
+
+  - name: rf_d
+    path: ../datasets/raw/rf_d # 중복
+    class_map:
+      # 이 소스의 클래스는 [melt pool, seam, torch, wire] — 그중 wire 만 쓰고
+      # 나머지는 버립니다. 이름이 다르면 개명해서 통일 (예: cable: wire).
+      wire: wire
+    val_ratio: 0.1               # stage1(공개 warm-up) 학습의 선택 지표용 공개 val
+    test_ratio: 0.1              # 최종 1회 평가용 공개 test (eval.final.yaml)
+    oversample: 1
+    crop:
+      enabled: false             # 공개셋은 이미 잘려 있음
+    resize: null
+    type: seg
+
+  - name: rf_e
+    path: ../datasets/raw/rf_e # 중복
+    class_map:
+      # 이 소스의 클래스는 [melt pool, seam, torch, wire] — 그중 wire 만 쓰고
+      # 나머지는 버립니다. 이름이 다르면 개명해서 통일 (예: cable: wire).
+      Wire: wire
+    val_ratio: 0.1               # stage1(공개 warm-up) 학습의 선택 지표용 공개 val
+    test_ratio: 0.1              # 최종 1회 평가용 공개 test (eval.final.yaml)
+    oversample: 1
+    crop:
+      enabled: false             # 공개셋은 이미 잘려 있음
+    resize: null
+    type: seg

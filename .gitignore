@@ -1,55 +1,61 @@
-#  Build
-src/**/bin/
-src/**/obj/
+# ============================================================================
+# 저장소 구조: datasets/ (데이터) · training/ (학습 Python) · app/ (실증 C#)
+# ============================================================================
 
-# VS Code
+# VS Code — 학습/추론 task 는 공유(tasks.json), 개인 설정은 제외
 .vs/
-.vscode/
+.vscode/*
+!.vscode/tasks.json
 
 # Claude
 .claude/
 
 # ----------------------------------------------------------------------------
-# Basler Pylon SDK (vendored under include/pylon/)
-# Keep ONLY the minimal set BaslerLiveView needs to build + run (USB3 / GigE):
-#   - Development/Assemblies/Basler.Pylon  (managed reference, compile-time)
-#   - Runtime/x64/*                        (native core + USB/GigE transport)
-# Everything below is large and unused by the app, so it stays out of git
-# (it remains on disk locally for anyone who needs it).
+# datasets/ — 데이터는 git 밖 (용량 큼). 폴더 규약은 README.md 참고.
+#   raw/kimm_*/ (앱 REC 원본 + labels/ + labels_seg/), raw/rf_*/ (공개셋),
+#   processed_seg/ · processed_obb/ (전처리 산출물), reference/ (기구부 기준 이미지)
 # ----------------------------------------------------------------------------
-include/pylon/Applications/
-include/pylon/Documentation/
-include/pylon/Development/Samples/
-include/pylon/Runtime/Win32/
-include/pylon/Runtime/CLProtocol/
-include/pylon/Runtime/x64/pylonCXP/
-include/pylon/Runtime/x64/pylonDataProcessingPlugins/
-include/pylon/Runtime/x64/DataProcessingPluginsB/
+/datasets/
 
-# NOTE: include/YoloDotNet is a git submodule (see .gitmodules) — do NOT ignore it.
+# ----------------------------------------------------------------------------
+# training/ — 코드·설정만 추적, 산출물·환경은 제외
+# ----------------------------------------------------------------------------
+# 학습 산출물(체크포인트/로그/plots/overlays) + 증강 미리보기 + 추론 결과(runs/infer)
+/training/runs/
+# 평가 시각화 산출물(eval.py visualize — GT/추론 오버레이 png + summary.txt)
+/training/eval/
+# 다운로드/학습 가중치(base·best·last) — Ultralytics 가 받아오는 사전학습 가중치 포함
+/training/*.pt
+/training/weights/
+# 가상환경 (uv)
+/training/.venv/
+# Python 바이트코드
+__pycache__/
+*.py[cod]
+
+# ----------------------------------------------------------------------------
+# app/ — C# 빌드 산출물
+# ----------------------------------------------------------------------------
+app/src/**/bin/
+app/src/**/obj/
 
 # ONNX models — not committed; the default is auto-copied from the YoloDotNet
 # submodule's assets at build time (see BaslerLiveView.csproj).
 *.onnx
 
-# ----------------------------------------------------------------------------
-# Training workspace (finetuner/) — yolo26s-seg 파인튜닝
-# 코드/설정(finetuner/*.py, *.yaml)만 추적하고, 데이터·산출물은 제외(용량 큼).
-# ----------------------------------------------------------------------------
-# 원본(raw) + 로컬(mine) + 공개(rf_*) + 전처리 결과(processed) 데이터셋
-/datasets/
-# 학습 산출물(체크포인트/로그/plots) + 증강 미리보기(runs/preview)
-/finetuner/runs/
-# 평가 시각화 산출물(eval.py visualize — GT/추론 오버레이 png + summary.txt)
-/finetuner/eval/
-# 다운로드/학습 가중치(base·best·last)
-/finetuner/*.pt
-# 가상환경 (pip 이 만드는 .venv/.gitignore 에만 의존하지 않게 명시)
-/finetuner/.venv/
-# Python 바이트코드
-__pycache__/
-*.py[cod]
+# Basler Pylon SDK (vendored under app/external/pylon/)
+# Keep ONLY the minimal set BaslerLiveView needs to build + run (USB3 / GigE):
+#   - Development/Assemblies/Basler.Pylon  (managed reference, compile-time)
+#   - Runtime/x64/*                        (native core + USB/GigE transport)
+# Everything below is large and unused by the app, so it stays out of git
+# (it remains on disk locally for anyone who needs it).
+app/external/pylon/Applications/
+app/external/pylon/Documentation/
+app/external/pylon/Development/Samples/
+app/external/pylon/Runtime/Win32/
+app/external/pylon/Runtime/CLProtocol/
+app/external/pylon/Runtime/x64/pylonCXP/
+app/external/pylon/Runtime/x64/pylonDataProcessingPlugins/
+app/external/pylon/Runtime/x64/DataProcessingPluginsB/
 
-*.pyc
-
-.claude/worktrees/
+# NOTE: app/external/YoloDotNet is a git submodule (see .gitmodules) — do NOT ignore it.

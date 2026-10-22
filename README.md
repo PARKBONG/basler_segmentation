@@ -1,0 +1,50 @@
+# basler_segmentation
+
+Basler 카메라(eye-in-hand)로 WAAM 와이어를 실시간 분할하는 프로젝트. 세 덩어리로 나뉜다.
+
+```
+basler_segmentation/
+├─ datasets/   데이터 (git 밖)          앱이 녹화하고, training 이 라벨·전처리·학습에 쓴다
+├─ training/   학습 Python (uv 프로젝트) 라벨러 · 전처리 · 학습 · 평가 · 추론
+└─ app/        실증 C# (.NET 8 WPF)      라이브 뷰 · 녹화 · 학습한 모델로 실시간 추론
+```
+
+흐름: `app` 으로 녹화 → `training/labeller` 로 라벨 → `training` 으로 전처리·학습 → ONNX 를 `app` 에 넣어 실증.
+
+## datasets/
+
+데이터는 용량 때문에 git 에 넣지 않는다 (`.gitignore`). 폴더 규약:
+
+| 경로 | 내용 | 만드는 쪽 |
+|---|---|---|
+| `raw/kimm_YYMMDD_HHMMSS[_메모]/images/` | 녹화 세션 원본 (크롭 전 풀사이즈 PNG) | 앱 REC |
+| `raw/kimm_*/labels/` · `labels_seg/` | 손으로 잡은 OBB · 와이어 seg 폴리곤 | 라벨러 |
+| `raw/rf_*/` | 공개 데이터셋 (Roboflow) | `training/download.py` |
+| `raw/_removed_black/` · `_removed_manual/` | 빼 둔 프레임 (되돌리기용) | 정리 작업 · 라벨러 삭제 |
+| `processed_seg/` · `processed_obb/` | 학습용 산출물 (크롭·분할) | `training/preprocess.py` |
+| `reference/` | 기구부(튜브+와이어) 기준 이미지·누끼·윤곽선 | `training/tools/make_reference_cutout.py` |
+
+## training/
+
+```powershell
+cd training
+uv sync --extra train --extra export      # 첫 설치 (torch cu128 · ultralytics · ONNX)
+uv run labeller/server.py                 # 라벨러 → http://localhost:8765
+uv run preprocess.py                      # raw → processed_seg
+uv run train.py --config train.single.yaml
+```
+
+자세한 건 [training/README.md](training/README.md). VS Code 에서는 `Ctrl+Shift+P → Tasks: Run Task` 의
+`training: train` / `training: inference — …` / `training: tensorboard` 로 돌릴 수 있다.
+
+## app/
+
+```powershell
+git submodule update --init               # app/external/YoloDotNet
+dotnet build app/basler_segmentation.sln
+```
+
+`app/external/` 에 Basler pylon SDK(필요한 부분만 벤더링)와 YoloDotNet(submodule)이 있다.
+설정은 [app/src/BaslerLiveView/config/config.xml](app/src/BaslerLiveView/config/config.xml) —
+녹화 폴더·기준 이미지 같은 상대경로는 저장소 루트(`.git` 이 있는 폴더) 기준.
+자세한 건 [app/src/BaslerLiveView/README.md](app/src/BaslerLiveView/README.md).

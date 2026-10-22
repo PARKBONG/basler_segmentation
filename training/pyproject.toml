@@ -1,0 +1,54 @@
+# training/ 파이썬 환경 정의 (uv) — 저장소의 학습 쪽 루트. (데이터는 ../datasets/, 앱은 ../app/)
+#
+#   cd training && uv sync                                # 라벨러/전처리용 최소 설치 (pyyaml, pillow)
+#   cd training && uv sync --extra train --extra export   # + torch(cu128) · ultralytics · ONNX
+#   cd training && uv run labeller/server.py
+#   (루트에서: uv run training/labeller/server.py — uv 가 스크립트 위치로 이 파일을 찾음)
+
+[project]
+name = "basler-training"
+version = "0.1.0"
+description = "yolo26s-seg 파인튜닝 파이프라인 + OBB 라벨러"
+# 하한: ultralytics/torch 요구치. 상한: pyyaml 6.0.x 에 cp314+ 휠이 없어
+# 3.14/3.15 에서는 소스 빌드(MSVC 필요)로 떨어진다. .python-version 으로 3.12 고정.
+requires-python = ">=3.10,<3.14"
+
+# 코어 — 라벨러(labeller/server.py)와 preprocess/selftest 가 쓰는 것만.
+# torch 를 코어에 넣으면 라벨링만 하려는 머신에서도 수 GB 를 끌어온다 → extra 로 분리.
+dependencies = [
+    "pyyaml>=6.0",   # *_config.yaml 로드 (ultralytics 의존성이지만 명시)
+    "pillow>=10.0",  # 크롭/리사이즈/미리보기 — preprocess.py, selftest.py
+]
+
+[project.optional-dependencies]
+# 학습/평가 — train.py, eval.py. B200(sm_100) / RTX 5090(sm_120) 둘 다 Blackwell 이라
+# CUDA 12.8+ 빌드가 필요하다 (그 이전 휠은 미지원). cu128 휠 하나가 둘 다 커버.
+train = [
+    "torch",
+    "torchvision",
+    "ultralytics>=8.3.0",
+    "albumentations>=2.0",  # train.*.yaml 의 blur: → Ultralytics augmentations (GaussianBlur)
+    "tensorboard",          # 학습 곡선 — train.py 가 Ultralytics tensorboard 로깅을 켬
+]
+# ONNX export + 검증. CPU 전용 머신이면 onnxruntime-gpu 대신 onnxruntime 로.
+export = [
+    "onnx>=1.16.0",
+    "onnxruntime-gpu>=1.18.0",
+    "onnxslim>=0.1.34",  # ONNX 그래프 최적화 (export 시 Ultralytics 가 사용)
+]
+# 공개 데이터셋 SDK 다운로드 — download.py. 1.0 미만은 Version.download 없음.
+download = ["roboflow>=1.0"]
+
+[tool.uv]
+package = false  # 애플리케이션(스크립트 모음)이므로 자기 자신을 빌드/설치하지 않는다
+
+# requirements.txt 의 --extra-index-url 대신 명시적 인덱스 고정.
+# explicit = true → torch/torchvision 만 이 인덱스에서 받고, 나머지는 PyPI 에서 받는다.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }

@@ -1,0 +1,89 @@
+{
+  // training 학습·추론 — Ctrl+Shift+P → "Tasks: Run Task".
+  // 모두 training/ 에서 uv 로 실행 (경로 입력은 training/ 기준 또는 절대경로).
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "training: train",
+      "detail": "configs/train.*.yaml 하나를 골라 학습 (+ export)",
+      "type": "process",
+      "command": "uv",
+      "args": ["run", "--extra", "train", "--extra", "export", "train.py", "--config", "${input:trainConfig}"],
+      "options": { "cwd": "${workspaceFolder}/training" },
+      "problemMatcher": []
+    },
+    {
+      "label": "training: inference — 사진 1장",
+      "detail": "크롭 → 예측 그림 (runs/infer/<시각>/<이름>_pred.jpg)",
+      "type": "process",
+      "command": "uv",
+      "args": ["run", "--extra", "train", "--extra", "export", "infer.py",
+               "--weights", "${input:weights}", "--source", "${input:image}", "--crop", "${input:crop}"],
+      "options": { "cwd": "${workspaceFolder}/training" },
+      "problemMatcher": []
+    },
+    {
+      "label": "training: inference — 세션 → 동영상",
+      "detail": "세션 폴더의 전 프레임 → 동영상 (runs/infer/<시각>/<세션>.mp4)",
+      "type": "process",
+      "command": "uv",
+      "args": ["run", "--extra", "train", "--extra", "export", "infer.py",
+               "--weights", "${input:weights}", "--source", "${input:session}",
+               "--crop", "${input:crop}", "--fps", "${input:fps}"],
+      "options": { "cwd": "${workspaceFolder}/training" },
+      "problemMatcher": []
+    },
+    {
+      "label": "training: tensorboard",
+      "detail": "http://localhost:6006 — runs/ 아래 모든 학습 (멈출 땐 터미널 휴지통)",
+      "type": "process",
+      "command": "uv",
+      "args": ["run", "--extra", "train", "tensorboard", "--logdir", "runs", "--host", "127.0.0.1", "--port", "6006"],
+      "options": { "cwd": "${workspaceFolder}/training" },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "trainConfig",
+      "type": "pickString",
+      "description": "학습 config",
+      "options": [
+        { "label": "train.single.yaml — seg, val/test 분리 (측정용, early stop)", "value": "train.single.yaml" },
+        { "label": "train.seg_all.yaml — seg, 전체 데이터 (배포용)", "value": "train.seg_all.yaml" },
+        { "label": "train.obb_all.yaml — obb, 전체 데이터 (배포용, preprocess --task obb 선행)", "value": "train.obb_all.yaml" }
+      ],
+      "default": "train.single.yaml"
+    },
+    {
+      "id": "weights",
+      "type": "promptString",
+      "description": "가중치 — 타임스탬프 빼고 적으면 최신 실행. 예: runs/segment/yolo26s-seg-all/weights/best.pt, runs/obb/yolo26s-obb-all/weights/best.pt",
+      "default": "runs/segment/yolo26s-seg-finetune/weights/best.pt"
+    },
+    {
+      "id": "image",
+      "type": "promptString",
+      "description": "사진 파일 경로",
+      "default": "../datasets/raw/kimm_261019_161818/images/000270__cap_261019_161818.png"
+    },
+    {
+      "id": "session",
+      "type": "promptString",
+      "description": "세션 폴더 (datasets/raw/kimm_…)",
+      "default": "../datasets/raw/kimm_261019_161818"
+    },
+    {
+      "id": "crop",
+      "type": "promptString",
+      "description": "크롭 'W H CX% CY%' (예: 1280 1280 40 40) — auto = preprocess.yaml 값, none = 크롭 안 함",
+      "default": "auto"
+    },
+    {
+      "id": "fps",
+      "type": "promptString",
+      "description": "동영상 fps",
+      "default": "5"
+    }
+  ]
+}
