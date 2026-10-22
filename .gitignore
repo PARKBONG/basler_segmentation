@@ -59,3 +59,7 @@ app/external/pylon/Runtime/x64/pylonDataProcessingPlugins/
 app/external/pylon/Runtime/x64/DataProcessingPluginsB/
 
 # NOTE: app/external/YoloDotNet is a git submodule (see .gitmodules) — do NOT ignore it.
+
+# 도구 캐시
+.pytest_cache/
+.ruff_cache/

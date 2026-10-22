@@ -53,7 +53,7 @@ def parse_crop(text: str) -> dict | None:
     try:
         w, h, cx, cy = (float(v) for v in text.replace(",", " ").split())
     except ValueError:
-        raise SystemExit(f"--crop 은 'W H CX CY' (예: 1280 1280 50 50), auto, 또는 none: {text!r}")
+        raise SystemExit(f"--crop 은 'W H CX CY' (예: 1280 1280 50 50), auto, 또는 none: {text!r}") from None
     return {"width": int(w), "height": int(h), "center_x": cx, "center_y": cy}
 
 

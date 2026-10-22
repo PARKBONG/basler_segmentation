@@ -4,63 +4,16 @@
 # 설정으로 확인한 뒤 데이터를 다 넣어 다시 학습하는 것. val 은 train 과 겹치므로 지표는
 # 낙관적이고 early stopping 이 과적합을 못 잡음 → 대신 epochs 를 train.single(진짜 val 로
 # early stopping 한 실행)의 best epoch 로 고정한다 — 과적합 직전까지만 학습.
-
-stages:
-  preview_aug: false
-  train: true
-  export: true
+base: base/train.yaml
 
 train:
   model: yolo26s-seg.pt
   data: ../datasets/processed_seg/kimm/data.all.yaml   # preprocess.py 가 쓰는 전체 데이터 버전
   epochs: 500                # ← train.single 의 best epoch 로 바꿀 것 (끝나면 채움)
-  imgsz: 640
-  batch: -1
-  device: "0"
-  workers: 8
   patience: 0                # 0 = EarlyStopping 끔 (val 이 train 과 겹쳐 의미 없음)
   project: runs/segment
   name: yolo26s-seg-all      # runs/segment/yolo26s-seg-all/<YYMMDD_HHMMSS>/
-  resume: false
-  optimizer: auto
-  cos_lr: true
-  seed: 0
-
-  # ── 증강 — train.single.yaml 과 같게 유지 ─────────────────────────────
-  hsv_h: 0.0
-  hsv_s: 0.0
-  hsv_v: 0.6
-  degrees: 15.0
-  translate: 0.1
-  scale: 0.2
-  shear: 0.0
-  perspective: 0.0
-  flipud: 0.0
-  fliplr: 0.0
-  mosaic: 1.0
-  close_mosaic: 10
-  mixup: 0.0
-  copy_paste: 0.0
-  blur:
-    p: 0.1
-    sigma: [0.3, 1.5]
-
-# 매 val 마다 원본 4장 + 증강 12장(값 표시) 추론 격자 → <실행 폴더>/overlays/epoch_NNN.jpg
-# 와 TensorBoard Images 탭. 증강 범위는 위 train 블록 값을 그대로 씀 (epoch_overlay.py).
-overlay:
-  enabled: true
 
 export:
-  format: onnx
-  opset: 12                  # YoloDotNet(ONNX Runtime) 호환
-  simplify: true
-  half: false
-  dynamic: false
-  # 앱 Models/ 로 복사 — 기존 파일은 그대로 두고 타임스탬프가 붙은 이름으로 들어감
-  # (앱 config.xml 의 <Model> 을 그 파일명으로 바꾸면 적용).
+  # 앱이 이 이름으로 읽음 (config.xml <Model>) — 덮어쓰고 이력 사본을 남김 (base/train.yaml 참고)
   deploy_to: ../app/src/BaslerLiveView/Models/yolo26s-seg.onnx
-
-preview:
-  project: runs/preview
-  name: aug
-  fraction: 0.1

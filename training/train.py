@@ -1,12 +1,11 @@
 """
-yolo26s-obb 파인튜닝 + ONNX export.
+yolo26s-seg / yolo26s-obb 파인튜닝 + ONNX export.
 
-코드만 여기(로컬)에서 작성하고, 실제 학습은 RTX 5090 머신에서 돌립니다.
 데이터셋은 preprocess.py 산출물의 data.yaml 을 사용합니다.
 
-파이프라인:  download.py → preprocess.py → train.py
+파이프라인:  (라벨러) → preprocess.py → train.py → (eval.py · infer.py)
 
-**config 는 반드시 --config 로 명시합니다.** 후보가 여럿(단일/stage1/stage2)이라
+**config 는 반드시 --config 로 명시합니다.** 후보가 여럿(single/seg_all/obb_all)이라
 기본값을 고르면 의도와 다른 설정으로 학습해도 알아채지 못하기 때문입니다. 생략하면
 바로 오류이며, 읽은 config 경로는 항상 로그 첫 줄에 찍힙니다.
 
@@ -16,11 +15,10 @@ config 의 stages 로 무엇을 돌릴지 고릅니다 (블록 자체가 필수 
     export      : best.pt → ONNX → 앱 Models/ 배치
 재학습 없이 export 만 다시 하려면 train: false, export: true 로 두면 됩니다.
 
-사용법(5090 머신):
-    pip install -r requirements.txt
-    python train.py --config train.single.yaml     # 단일 스테이지
-    python train.py --config train.stage1.yaml     # 공개 warm-up
-    python train.py --config train.stage2.yaml     # in-domain 적응
+사용법 (training/ 에서, uv sync --extra train --extra export 후):
+    uv run train.py --config train.single.yaml     # 측정용 (val/test 분리, early stop)
+    uv run train.py --config train.seg_all.yaml    # 배포용 seg (전체 데이터)
+    uv run train.py --config train.obb_all.yaml    # 배포용 obb (전체 데이터)
 """
 from __future__ import annotations
 
@@ -38,7 +36,7 @@ class Trainer(Stage):
     """
     파인튜닝과 ONNX export 를 담당하는 단계.
 
-    스테이지마다 다른 yaml 을 쓰므로(`Trainer("train.stage1.yaml")`) 후보가 여럿이면
+    실행마다 다른 yaml 을 쓰므로(`Trainer("train.single.yaml")`) 후보가 여럿이면
     기본값을 고르지 않습니다 — 조용히 엉뚱한 설정으로 학습하는 것을 막기 위함입니다.
     """
 
@@ -57,7 +55,7 @@ class Trainer(Stage):
 
         두 가지로 적을 수 있습니다:
             data: ../datasets/processed_seg/kimm/data.yaml   경로 그대로 (한 소스)
-            data: rf_a, rf_b                                  소스 **이름** 목록 → 그 자리에서 통합
+            data: kimm, other                                 소스 **이름** 목록 → 그 자리에서 통합
         이름으로 적으면 datasets/processed_seg/<이름>/ (OBB 모델이면 processed_obb/<이름>/)
         규약으로 코드가 경로를 만듭니다.
         """
@@ -75,14 +73,14 @@ class Trainer(Stage):
         if not path.exists():
             raise FileNotFoundError(
                 f"데이터셋 정의가 없습니다: {path}\n"
-                f"먼저 python preprocess.py --config <yaml> 으로 "
-                f"데이터셋을 만드세요 (공개셋은 python download.py 선행)."
+                f"먼저 python preprocess.py 로 데이터셋을 만드세요 "
+                f"(OBB 는 --task obb --out ../datasets/processed_obb)."
             )
         return path
 
     def merged_data_path(self, names: list) -> Path:
         """
-        소스 이름 목록(`data: rf_a, rf_b`)을 묶은 data.yaml 을 쓰고 그 경로를 준다.
+        소스 이름 목록(`data: kimm, other`)을 묶은 data.yaml 을 쓰고 그 경로를 준다.
 
         모양은 preprocess.py 의 통합본과 같습니다 — split 마다 폴더 목록을 주면
         Ultralytics 가 알아서 합쳐 읽습니다. 소스 조합이 바뀌면 파일도 새로 써집니다.
@@ -120,26 +118,26 @@ class Trainer(Stage):
 
     def start_weights(self) -> str:
         """
-        시작 가중치. 기본값 없음 — stage2 는 stage1 checkpoint 를 가리켜야 하는데,
-        키를 빠뜨렸을 때 조용히 COCO 에서 다시 시작하면 warm-start 가 사라집니다.
+        시작 가중치. 기본값 없음 — 이전 실행의 checkpoint 에서 이어 학습할 때 키를
+        빠뜨리면 조용히 COCO 에서 다시 시작해 warm-start 가 사라지기 때문.
 
         경로 구분자가 있으면 체크포인트 파일로 보고 training/ 기준으로 해석하고 존재를
-        확인합니다. 구분자가 없으면(`yolo26s-obb.pt`) Ultralytics 가 받아올 모델 이름이라
+        확인합니다. 구분자가 없으면(`yolo26s-seg.pt`) Ultralytics 가 받아올 모델 이름이라
         그대로 넘깁니다.
         """
         model = str(self.cfg.get("train", {}).get("model") or "").strip()
         if not model:
             self.fail("train.model 이 없습니다 — 시작 가중치를 기본값으로 추측하지 "
-                      "않습니다 (예: yolo26s-obb.pt 또는 runs/obb/stage1/weights/best.pt).")
+                      "않습니다 (예: yolo26s-seg.pt 또는 runs/segment/<name>/weights/best.pt).")
         if "/" not in model and "\\" not in model:
             return model                      # Ultralytics 가 이름으로 해석/다운로드
-        # 타임스탬프를 뺀 runs/obb/stage1/weights/best.pt 로 적으면 stage1 의 최신 실행
+        # 타임스탬프를 뺀 runs/<task>/<name>/weights/best.pt 로 적으면 그 name 의 최신 실행
         path = self.resolve_weights(model)
         if not path.exists():
             raise FileNotFoundError(
                 f"시작 가중치가 없습니다: {path}\n"
                 f"{self.config_path.name} 의 train.model 을 확인하세요 "
-                f"(stage2 는 stage1 을 먼저 학습해야 합니다)."
+                f"(이어 학습할 실행을 먼저 끝내야 합니다)."
             )
         return str(path)
 
@@ -295,13 +293,23 @@ class Trainer(Stage):
         self.log(f"생성: {exported}")
 
         if deploy_to:
-            base = self.resolve(deploy_to)
-            base.parent.mkdir(parents=True, exist_ok=True)
-            # 기존 파일은 절대 건드리지 않고, 새 파일에 타임스탬프를 붙여 생성
+            # 앱은 고정 이름(deploy_to)을 읽는다 (config.xml <Model>) — 그 이름을 새 모델로
+            # 덮어쓰고, 되돌릴 수 있게 타임스탬프 사본을 history/ 에 남긴다 (앱 빌드가
+            # history/ 는 복사하지 않음). 처음 덮어쓰는 원래 파일(배포 이력이 없는 것)은
+            # history/<이름>.orig 로 한 번 백업.
+            current = self.resolve(deploy_to)
+            hist_dir = current.parent / "history"
+            hist_dir.mkdir(parents=True, exist_ok=True)
+            history = list(hist_dir.glob(f"{current.stem}.2*{current.suffix}"))
+            if current.exists() and not history:
+                orig = hist_dir / f"{current.stem}.orig{current.suffix}"
+                shutil.copyfile(current, orig)
+                self.log(f"원래 모델 백업: {orig}")
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            dest = base.with_name(f"{base.stem}.{stamp}{base.suffix}")
-            shutil.copyfile(exported, dest)   # runs/ 의 원본도 그대로 유지(복사)
-            self.log(f"앱에 배치 완료(신규): {dest}")
+            dest = hist_dir / f"{current.stem}.{stamp}{current.suffix}"
+            shutil.copyfile(exported, dest)      # 이력 (runs/ 의 원본도 그대로 유지)
+            shutil.copyfile(exported, current)   # 앱이 읽는 현재 모델
+            self.log(f"앱에 배치 완료: {current}  (이력 {dest.name})")
         else:
             self.log("export.deploy_to 비어있음 → 복사 생략")
 

@@ -1,0 +1,35 @@
+# push · PR 마다 학습 코드(Python)와 앱(C#)이 깨지지 않았는지 확인.
+# 데이터·GPU 가 필요한 학습 자체는 돌리지 않는다 — 테스트는 합성 데이터로 돈다.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  training:
+    name: training (ruff · pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: training
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      # extra(train/export) 없이 → torch 없이 핵심 의존성 + dev(pytest · ruff) 만
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run pytest
+
+  app:
+    name: app (build · format)
+    runs-on: windows-latest   # WPF
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # app/external/YoloDotNet
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: app/global.json
+      - run: dotnet build app/basler_segmentation.sln -c Release
+      - run: dotnet format app/src/BaslerLiveView/BaslerLiveView.csproj --verify-no-changes

@@ -15,10 +15,11 @@ public sealed class CameraConfig
     /// is pinned to this, and exposure is capped to fit inside the frame period.</summary>
     public double FrameRate { get; set; } = 85;
 
-    /// <summary>ONNX segmentation model file name, resolved under the <c>Models\</c>
-    /// folder beside the exe. YoloDotNet auto-detects the model version from the
-    /// file, so any supported YOLO seg model (e.g. yolo26s-seg.onnx) works.</summary>
-    public string SegModel { get; set; } = "yolo26s-seg.onnx";
+    /// <summary>ONNX model file name, resolved under the <c>Models\</c> folder beside the
+    /// exe. YoloDotNet detects the version and task from the file, so a YOLO segmentation
+    /// model (e.g. yolo26s-seg.onnx) or OBB model (yolo26s-obb.onnx) both work — see
+    /// <see cref="InferenceService"/>.</summary>
+    public string Model { get; set; } = "yolo26s-seg.onnx";
 
     /// <summary>Run segmentation on a <see cref="CropWidth"/>×<see cref="CropHeight"/>
     /// window instead of the whole frame. The live view always shows the full frame
@@ -56,15 +57,12 @@ public sealed class CameraConfig
     /// <summary>Outline opacity, 0–1.</summary>
     public double OutlineOpacity { get; set; } = 0.9;
 
-    /// <summary>Python used by the Save Ref button to rerun
-    /// training/tools/make_reference_cutout.py (needs cv2 + numpy).</summary>
-    public string PythonExe { get; set; } = "python";
-
     /// <summary>Where the Record button writes PNGs (full sensor resolution, uncropped).
+    /// Each REC session gets its own <c>kimm_YYMMDD_HHMMSS/images</c> folder underneath.
     /// Relative paths are anchored at the repo root (see
     /// <see cref="FrameRecorder.ResolveDirectory"/>). The default is the <c>raw</c>
-    /// source that training/preprocess.py reads.</summary>
-    public string RecordDir { get; set; } = "datasets/raw/images/train";
+    /// folder whose <c>kimm_*</c> sessions training/preprocess.py reads.</summary>
+    public string RecordDir { get; set; } = "datasets/raw";
 
     /// <summary>How many frames per second Record saves. Consecutive grabs are nearly
     /// identical, so the grab stream is sampled down to something worth labelling.
@@ -99,8 +97,9 @@ public sealed class CameraConfig
                 if (fps is > 0) cfg.FrameRate = fps.Value;
             }
 
-            var model = (string?)root.Element("Segmentation")?.Element("Model");
-            if (!string.IsNullOrWhiteSpace(model)) cfg.SegModel = model.Trim();
+            // <Inference><Model> — older configs used <Segmentation><Model>; accept both.
+            var model = (string?)(root.Element("Inference") ?? root.Element("Segmentation"))?.Element("Model");
+            if (!string.IsNullOrWhiteSpace(model)) cfg.Model = model.Trim();
 
             var crop = root.Element("Crop");
             if (crop != null)

@@ -15,10 +15,10 @@ public partial class MainWindow : Window
     private readonly CameraService _camera = new();
     private readonly CameraConfig _config = CameraConfig.Load();
 
-    // YOLO segmentation overlay (lazily created when first enabled).
-    private SegmentationService? _seg;
-    private volatile bool _segEnabled;
-    // Model file name comes from config\config.xml (<Segmentation><Model>),
+    // YOLO inference overlay — segmentation or OBB, per the model file (lazily created).
+    private InferenceService? _infer;
+    private volatile bool _inferEnabled;
+    // Model file name comes from config\config.xml (<Inference><Model>),
     // resolved under Models\ beside the exe. Falls back to the config default.
     private readonly string _modelPath;
 
@@ -63,7 +63,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
-        _modelPath = Path.Combine(AppContext.BaseDirectory, "Models", _config.SegModel);
+        _modelPath = Path.Combine(AppContext.BaseDirectory, "Models", _config.Model);
         _recorder = new FrameRecorder(
             FrameRecorder.ResolveDirectory(_config.RecordDir), _config.RecordQueueCapacity)
         {
@@ -93,16 +93,16 @@ public partial class MainWindow : Window
     /// <summary>Short one-line description of the configured segmentation model:
     /// which file is expected (from config) and whether it is actually present.
     /// The real YOLO version is confirmed on the exe side once segmentation is
-    /// toggled on (see <see cref="Segment_Toggled"/>).</summary>
-    private string DescribeSegModel()
+    /// toggled on (see <see cref="Inference_Toggled"/>).</summary>
+    private string DescribeModel()
     {
         var file = Path.GetFileName(_modelPath);
         if (File.Exists(_modelPath))
         {
             var mb = new FileInfo(_modelPath).Length / (1024.0 * 1024.0);
-            return $"Seg model: {file} ✓ ({mb:0.#} MB) — toggle Segmentation to load & confirm version";
+            return $"Model: {file} ✓ ({mb:0.#} MB) — toggle Inference to load & confirm task/version";
         }
-        return $"Seg model: {file} ✗ MISSING — place it in Models\\ (see config.xml)";
+        return $"Model: {file} ✗ MISSING — place it in Models\\ (see config.xml)";
     }
 
     private void Refresh_Click(object sender, RoutedEventArgs e) => RefreshCameras();
@@ -122,11 +122,11 @@ public partial class MainWindow : Window
             if (CameraCombo.Items.Count > 0)
             {
                 CameraCombo.SelectedIndex = 0;
-                StatusText.Text = $"Found {CameraCombo.Items.Count} camera(s).  |  {DescribeSegModel()}";
+                StatusText.Text = $"Found {CameraCombo.Items.Count} camera(s).  |  {DescribeModel()}";
             }
             else
             {
-                StatusText.Text = $"No cameras found. Connect a device, or relaunch with --emulate for the software emulator.  |  {DescribeSegModel()}";
+                StatusText.Text = $"No cameras found. Connect a device, or relaunch with --emulate for the software emulator.  |  {DescribeModel()}";
             }
         }
         catch (Exception ex)
@@ -368,19 +368,19 @@ public partial class MainWindow : Window
         // out before returning.
         _recorder.Submit(width, height, bgra);
 
-        var seg = _seg;
-        if (_segEnabled && seg != null)
+        var infer = _infer;
+        if (_inferEnabled && infer != null)
         {
-            // Segmentation runs on the crop only — the same region the training
+            // Inference runs on the crop only — the same region the training
             // images will be cut down to, so the model sees at inference exactly the
             // framing it was trained on. Use the toolbar sliders to find it, then put
-            // the same numbers into preprocess_config.yaml: identical 0–100% convention.
+            // the same numbers into training/configs/preprocess.yaml: identical 0–100% convention.
             var cropped = _cropper.Crop(width, height, bgra, out int cw, out int ch);
 
             // Submit() copies the pixels out of the reused buffer immediately, so we
             // can return without blocking the grab loop; the annotated result arrives
-            // later via OnSegmentedFrame and is pasted in by Compose() below.
-            seg.Submit(cw, ch, cropped);
+            // later via OnInferredFrame and is pasted in by Compose() below.
+            infer.Submit(cw, ch, cropped);
             bgra = Compose(width, height, bgra);
         }
 
@@ -431,7 +431,7 @@ public partial class MainWindow : Window
     // Raised on the segmentation worker thread with a fresh (owned) buffer. It is not
     // rendered directly: display is driven entirely by the grab loop, which pastes
     // this in at the crop window's position (see Compose).
-    private void OnSegmentedFrame(int width, int height, byte[] bgra)
+    private void OnInferredFrame(int width, int height, byte[] bgra)
     {
         lock (_overlayLock)
         {
@@ -442,36 +442,36 @@ public partial class MainWindow : Window
         }
     }
 
-    private void Segment_Toggled(object sender, RoutedEventArgs e)
+    private void Inference_Toggled(object sender, RoutedEventArgs e)
     {
-        if (SegmentCheck.IsChecked == true)
+        if (InferenceCheck.IsChecked == true)
         {
             try
             {
-                if (_seg == null)
+                if (_infer == null)
                 {
                     // Model load + DirectML session init blocks briefly (~1-2s).
-                    _seg = new SegmentationService(_modelPath);
-                    _seg.FrameProcessed += OnSegmentedFrame;
-                    _seg.ErrorOccurred += ex =>
-                        Dispatcher.BeginInvoke(() => StatusText.Text = "Segmentation error: " + ex.Message);
+                    _infer = new InferenceService(_modelPath);
+                    _infer.FrameProcessed += OnInferredFrame;
+                    _infer.ErrorOccurred += ex =>
+                        Dispatcher.BeginInvoke(() => StatusText.Text = "Inference error: " + ex.Message);
                 }
-                _segEnabled = true;
-                StatusText.Text = $"Segmentation ON — {_seg.ModelInfo} · {_seg.Backend}  [{Path.GetFileName(_modelPath)}]";
+                _inferEnabled = true;
+                StatusText.Text = $"Inference ON — {_infer.ModelTask} · {_infer.ModelInfo} · {_infer.Backend}  [{Path.GetFileName(_modelPath)}]";
             }
             catch (Exception ex)
             {
-                _segEnabled = false;
-                SegmentCheck.IsChecked = false;
-                StatusText.Text = "Segmentation load failed: " + ex.Message;
+                _inferEnabled = false;
+                InferenceCheck.IsChecked = false;
+                StatusText.Text = "Inference load failed: " + ex.Message;
             }
         }
         else
         {
-            _segEnabled = false;
+            _inferEnabled = false;
             // Drop the last annotated crop, or it would stay frozen on screen.
             lock (_overlayLock) _hasOverlay = false;
-            StatusText.Text = "Segmentation OFF.";
+            StatusText.Text = "Inference OFF.";
         }
     }
 
@@ -519,7 +519,7 @@ public partial class MainWindow : Window
 
         _closing = true;
         e.Cancel = true;                    // hold the close until teardown finishes
-        _segEnabled = false;                // stop routing frames to the segmentation worker
+        _inferEnabled = false;                // stop routing frames to the segmentation worker
         _camera.FrameReady -= OnFrameReady; // stop feeding frames to the UI
         _recorder.Stop();                   // stop accepting frames (queued ones still flush)
 
@@ -531,7 +531,7 @@ public partial class MainWindow : Window
             await Task.Run(() =>
             {
                 _camera.Dispose();
-                _seg?.Dispose();
+                _infer?.Dispose();
                 _recorder.Dispose();
             });
         }

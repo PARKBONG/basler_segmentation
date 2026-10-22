@@ -52,8 +52,9 @@ REF_TUBE = REPO / "datasets" / "reference" / "reference_tube.png"
 REF_WIRE = REPO / "datasets" / "reference" / "reference_wire.png"
 
 sys.path.insert(0, str(TRAINING))
-from preprocess import min_area_rect  # noqa: E402 — training/ 를 path 에 넣은 뒤라야 import 됨
 from edge import find_tip, obb_pose  # noqa: E402 — 같은 폴더 (labeller/)
+
+from preprocess import min_area_rect  # noqa: E402 — training/ 를 path 에 넣은 뒤라야 import 됨
 
 IMG_EXTS = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
            ".bmp": "image/bmp", ".webp": "image/webp"}

@@ -1,5 +1,5 @@
-﻿"""
-파이프라인 자체 검증 — GPU도 카메라도 공개 데이터셋도 없이 돌아갑니다.
+"""
+파이프라인 자체 검증 (pytest) — GPU도 카메라도 실제 데이터셋도 없이 돌아갑니다.
 
 검증 대상:
   1. 크롭 기하 (crop_rect)          — 0/50/100% 규약, 0=원본, 원본보다 큰 요청의 클램프
@@ -20,38 +20,46 @@
   6. config 규약 (모든 단계)        — 후보 여럿이면 --config 명시 강제(조용한
                                       fallback 금지, 후보 1개면 자동), 저장소 yaml 린트,
                                       데이터/가중치 누락·오타 시 즉시 오류
-  7. 결과 폴더 규약                 — runs/obb/<name>/<YYMMDD_HHMMSS>/ (절대경로로 넘겨
+  7. 결과 폴더 규약                 — runs/<task>/<name>/<YYMMDD_HHMMSS>/ (절대경로로 넘겨
                                       Ultralytics runs_dir 중첩 방지), 가중치는 최신 실행
 
 필요: pyyaml, pillow  (ultralytics/torch 는 필요 없음)
 
-사용법:
-    python selftest.py          # 종료 코드 0 이면 전부 통과
+사용법 (training/ 에서):
+    uv run pytest               # 전부
+    uv run pytest -k session    # 이름에 session 이 들어간 테스트만
+
+각 테스트는 check(이름, 조건, 상세) 로 단언합니다 — 실패하면 그 이름과 상세가 메시지로
+나옵니다. 합성 데이터는 pytest 의 임시 폴더(root fixture, tests/conftest.py)에 만듭니다.
 """
 from __future__ import annotations
 
-import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 import yaml
 from PIL import Image
 
 from common import CONFIG_DIR, HERE, RUN_STAMP_RE, resolve_weights
-from preprocess import (Preprocessor, auto_crop_rect, clip_polygon, convex_hull, crop_rect,
-                        label_bbox, min_area_rect, polygon_to_obb,
-                        polygon_area, transform_label)
 from eval import Evaluator  # ultralytics 는 run() 안에서 import 하므로 여기선 불필요
+from preprocess import (
+    Preprocessor,
+    auto_crop_rect,
+    clip_polygon,
+    convex_hull,
+    crop_rect,
+    label_bbox,
+    min_area_rect,
+    polygon_area,
+    polygon_to_obb,
+    transform_label,
+)
 from train import Trainer
-
-FAILURES: list = []
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
-    print(("PASS  " if ok else "FAIL  ") + name + (f"   {detail}" if detail else ""))
-    if not ok:
-        FAILURES.append(name)
+    """단언 — 실패하면 검사 이름과 상세를 메시지로 (pytest 가 그대로 보여줌)."""
+    assert ok, name + (f"   {detail}" if detail else "")
 
 
 def approx(a, b, tol=1e-6) -> bool:
@@ -288,7 +296,8 @@ def test_pipeline_no_crop(root: Path) -> None:
     # class_map 에 없는 junk(class 1) 는 제거되어야 함
     pub_lbl = sorted((out / "rf_a/labels/train").glob("*.txt"))
     bad = [p.name for p in pub_lbl
-           if any(l.split()[0] != "0" for l in p.read_text(encoding="utf-8").splitlines() if l.strip())]
+           if any(line.split()[0] != "0"
+                  for line in p.read_text(encoding="utf-8").splitlines() if line.strip())]
     check("pipeline: class_map 밖 클래스 제거", not bad, str(bad[:3]))
 
     # 크롭이 없으면 원본 그대로 (재인코딩 없음) — kimm 은 flat 레이아웃(images/)
@@ -304,7 +313,7 @@ def test_pipeline_no_crop(root: Path) -> None:
     check("pipeline: test_ratio 0 이면 data.yaml 에 test 키 없음", "test" not in data,
           str(data.get("test")))
 
-    # 소스별 data.yaml — 스테이지 학습(train.stage1/stage2)이 읽는 파일
+    # 소스별 data.yaml — eval.final(test) 등이 읽는 파일
     kimm_dy = yaml.safe_load((out / "kimm/data.yaml").read_text(encoding="utf-8"))
     check("pipeline: 소스별 data.yaml (kimm, val 포함)",
           kimm_dy.get("train") == "images/train" and kimm_dy.get("val") == "images/val"
@@ -340,9 +349,9 @@ def test_pipeline_crop(root: Path) -> None:
     check("crop: 좌표가 0~1 범위", all(0.0 <= x <= 1.0 for x in v))
 
     # 구석의 junk 는 class_map 에서 이미 빠지므로, 남은 건 wire 뿐
-    check("crop: 클래스는 wire 뿐", all(l.split()[0] == "0" for l in
+    check("crop: 클래스는 wire 뿐", all(line.split()[0] == "0" for line in
           (out / "kimm/labels/train" / (train_imgs[0].stem + ".txt")
-           ).read_text(encoding="utf-8").splitlines() if l.strip()))
+           ).read_text(encoding="utf-8").splitlines() if line.strip()))
 
     previews = list((out / "kimm/preview").glob("*.png")) + \
                list((out / "rf_a/preview").glob("*.png"))
@@ -551,7 +560,8 @@ def test_glob_source(root: Path) -> None:
     (raw / "kimm_x.zip").write_bytes(b"")                        # 폴더 아님 → 제외
     out = root / "out_glob"
 
-    def write_cfg(fname: str, path: str, names: dict | None = {0: "wire"}) -> Path:
+    def write_cfg(fname: str, path: str,
+                  names: dict | None = {0: "wire"}) -> Path:  # noqa: B006 — 읽기만 함
         src = {"name": "kimm", "path": path, "type": "seg",
                "class_map": {"wire": "wire"}, "val_ratio": 0.2, "oversample": 1,
                "crop": {"enabled": False}}
@@ -818,7 +828,7 @@ def test_pipeline_obb(root: Path) -> None:
 
     # seg 로 돌린 것과 이미지 산출 수가 같아야 함 (변환이 이미지를 잃지 않음)
     seg_out = root / "out_obb_seg"
-    seg = run_preprocess(root, seg_out, {"enabled": False}, task="seg")
+    run_preprocess(root, seg_out, {"enabled": False}, task="seg")
     n_obb = len(list((out / "kimm/images/train").glob("*")))
     n_seg = len(list((seg_out / "kimm/images/train").glob("*")))
     check("obb 파이프라인: seg 와 산출 이미지 수 동일", n_obb == n_seg, f"{n_obb} vs {n_seg}")
@@ -925,15 +935,15 @@ def test_trainer_config_required(root: Path) -> None:
     # 이름을 잘못 적어도 traceback 이 아니라 후보 안내
     expect_raises("trainer: 없는 config 는 SystemExit + 후보 안내", SystemExit,
                   lambda: Trainer("train.stage3.yaml"), "후보")
-    check("trainer: config 후보 목록", "train.stage1.yaml" in Trainer.config_candidates(),
+    check("trainer: config 후보 목록", "train.single.yaml" in Trainer.config_candidates(),
           Trainer.config_candidates())
 
     # 상대경로는 training/ 기준으로 해석되고, 넘긴 파일이 그대로 쓰여야 함
-    t = Trainer("train.stage1.yaml")
+    t = Trainer("train.single.yaml")
     check("trainer: 넘긴 config 를 그대로 읽음",
-          t.config_path == CONFIG_DIR / "train.stage1.yaml", str(t.config_path))
-    check("trainer: stage1 config 내용 확인",
-          t.cfg["train"]["name"] == "stage1", str(t.cfg["train"].get("name")))
+          t.config_path == CONFIG_DIR / "train.single.yaml", str(t.config_path))
+    check("trainer: single config 내용 확인",
+          t.cfg["train"]["name"] == "yolo26s-seg-finetune", str(t.cfg["train"].get("name")))
 
 
 def test_trainer_stages_guard(root: Path) -> None:
@@ -1063,13 +1073,13 @@ def test_preprocess_config_auto() -> None:
 
 
 def test_real_pipeline_config() -> None:
-    """저장소의 configs/preprocess.yaml + download.yaml 이 규약을 지키는지 (config 린트)."""
+    """저장소의 configs/preprocess.yaml 이 규약을 지키는지 (config 린트)."""
     st = Preprocessor("preprocess.yaml")
     srcs = st.all_sources()
     check("preprocess.yaml: names/sources/out",
           bool(st.cfg.get("names")) and bool(srcs) and bool(st.cfg.get("out")))
     check("preprocess.yaml: task 유효", st.task in ("seg", "obb"), st.task)
-    # 소스별 data.yaml 이 각 스테이지 학습(train.stage1/stage2)의 검증셋이 되므로,
+    # 소스별 data.yaml 이 그 소스로 학습할 때의 검증셋이 되므로,
     # 모든 소스가 val 을 가져야 한다 (없으면 그 소스로 학습 시 빈 val 로 죽음)
     no_val = [s["name"] for s in srcs
               if not (float(s.get("val_ratio", 0)) > 0 or s.get("val_sessions"))]
@@ -1078,21 +1088,6 @@ def test_real_pipeline_config() -> None:
     bad_type = [f"{s['name']}={s.get('type')}" for s in srcs
                 if s.get("type") not in ("seg", "obb")]
     check("preprocess.yaml: 모든 소스 type 이 seg/obb", not bad_type, str(bad_type))
-
-    # download.py 쪽 규약 — 내려받을 소스는 workspace/project 가 있어야 함
-    all_sources = yaml.safe_load(
-        (CONFIG_DIR / "download.yaml").read_text(encoding="utf-8")).get("sources") or []
-    rf = [s for s in all_sources if s.get("roboflow")]
-    check("download.yaml: roboflow 소스 존재 + workspace/project",
-          bool(rf) and all(s["roboflow"].get("workspace") and s["roboflow"].get("project")
-                           for s in rf),
-          ", ".join(s["name"] for s in rf) or "(없음)")
-    # 다운로드 소스의 path 는 preprocess 쪽과 어긋나면 안 됨 —
-    # 두 쪽이 공유하는 유일한 계약이 datasets/raw/<이름>/ 경로이기 때문.
-    pre_paths = {s["name"]: str(s.get("path")) for s in srcs}
-    mismatch = [s["name"] for s in all_sources
-                if s["name"] in pre_paths and str(s.get("path")) != pre_paths[s["name"]]]
-    check("download.yaml: path 가 preprocess 쪽과 일치", not mismatch, str(mismatch))
 
 
 def test_real_eval_configs() -> None:
@@ -1125,45 +1120,3 @@ def test_real_train_configs() -> None:
         check(f"config {name}: train.data 명시", bool(tr.get("data")), str(tr.get("data")))
         if stages.get("export"):
             check(f"config {name}: export 켰으면 export 블록도", bool(t.cfg.get("export")))
-
-
-def main() -> int:
-    test_crop_rect()
-    test_auto_crop_rect()
-    test_clip_polygon()
-    test_transform_label()
-    test_min_area_rect()
-    test_split_group()
-
-    root = Path(tempfile.mkdtemp(prefix="training_selftest_"))
-    try:
-        test_pipeline_no_crop(root)
-        test_pipeline_crop(root)
-        test_pipeline_auto_crop(root)
-        test_pipeline_targets(root)
-        test_pipeline_incremental(root)
-        test_pipeline_three_way(root)
-        test_pipeline_obb(root)
-        test_source_type(root)
-        test_orphan_label_cleanup(root)
-        test_no_class_cleanup(root)
-        test_glob_source(root)
-        test_session_split(root)
-        test_labeller_sessions(root)
-        test_preprocess_config_auto()
-        test_real_pipeline_config()
-        test_real_eval_configs()
-        test_trainer_config_required(root)
-        test_trainer_stages_guard(root)
-        test_trainer_data_and_weights(root)
-        test_trainer_run_dir(root)
-        test_real_train_configs()
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-    print("\nALL PASS" if not FAILURES else f"\n{len(FAILURES)} FAILURE(S): " + ", ".join(FAILURES))
-    return len(FAILURES)
-
-
-if __name__ == "__main__":
-    sys.exit(main())

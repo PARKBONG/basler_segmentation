@@ -7,10 +7,9 @@
   · 후보가 여럿이면 --config 를 **반드시 명시**해야 합니다 — 기본값으로 조용히
     넘어가면 의도한 것과 다른 데이터/설정으로 학습해도 알 수 없기 때문입니다.
 
-    download.py                                  configs/download.yaml 자동 (후보 1개)
-    preprocess.py --config preprocess.stage1.yaml    데이터셋 굽기
-    train.py --config train.stage1.yaml              학습 + ONNX export
-    eval.py --config eval.stage2.yaml                체크포인트 평가
+    preprocess.py                                configs/preprocess.yaml 자동 (후보 1개)
+    train.py --config train.single.yaml          학습 + ONNX export
+    eval.py --config eval.single.yaml            체크포인트 평가
 
 어느 쪽이든 읽은 config 경로는 항상 로그 첫 줄에 찍습니다.
 --config 인자는 configs/ 안 파일명으로도, 경로 그대로(training/ 기준)로도 됩니다.
@@ -18,7 +17,6 @@ yaml **내용물**의 경로(../datasets/… 등)는 configs/ 가 아니라 trai
 """
 from __future__ import annotations
 
-import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -30,9 +28,9 @@ CONFIG_DIR = HERE / "configs"
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
-# 파일명 앞 인덱스 접두어(000000__) 규약 — download.index_files 가 붙이고,
-# preprocess.split_group 이 rf 사본에서 벗겨 그룹핑합니다. 한쪽만 바꾸면
-# 분할 그룹핑이 조용히 깨지므로 정의는 여기 한 곳에만 둡니다.
+# 파일명 앞 인덱스 접두어(000000__) 규약 — 앱 REC(FrameRecorder)가 붙이고,
+# preprocess.split_group 이 Roboflow 증강 사본(.rf.)에서 벗겨 그룹핑합니다.
+# 정의는 여기 한 곳에만 둡니다.
 INDEX_RE = re.compile(r"^\d+__")
 
 # 학습 산출물 폴더 규약:  runs/obb/<name>/<YYMMDD_HHMMSS>/
@@ -41,11 +39,32 @@ INDEX_RE = re.compile(r"^\d+__")
 RUN_STAMP_RE = re.compile(r"^\d{6}_\d{6}$")
 
 
-def load_yaml(path: Path) -> dict:
+def merge(base: dict, over: dict) -> dict:
+    """over 를 base 위에 덮어 합친다 — dict 는 키별로 재귀, 그 외(리스트·값)는 over 로 교체."""
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def load_yaml(path: Path, _seen: frozenset = frozenset()) -> dict:
+    """
+    yaml 로드. 최상위에 `base: <파일>` 이 있으면 그 파일(이 yaml 과 같은 폴더 기준)을
+    먼저 읽고 이 파일 내용을 덮어 합친다 (merge) — 여러 config 가 공유하는 블록(증강·
+    export 등)을 한 곳에 두고, 각 config 에는 다른 것만 적게 하려는 것. base 도 base 를
+    가질 수 있다.
+    """
     if not path.exists():
         raise FileNotFoundError(f"설정 파일이 없습니다: {path}")
     with path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        cfg = yaml.safe_load(f) or {}
+    base = cfg.pop("base", None)
+    if not base:
+        return cfg
+    here = path.resolve()
+    if here in _seen:
+        raise ValueError(f"config base 가 순환합니다: {path}")
+    return merge(load_yaml(path.parent / str(base), _seen | {here}), cfg)
 
 
 def resolve(path_str) -> Path:
@@ -72,7 +91,7 @@ def resolve_weights(path_str) -> Path:
     가중치 경로 해석 (training/ 기준).
 
     학습 결과는 `runs/obb/<name>/<YYMMDD_HHMMSS>/weights/best.pt` 로 쌓이는데, config
-    에 타임스탬프를 매번 손으로 적게 하면 stage2·eval 이 금방 낡습니다. 그래서
+    에 타임스탬프를 매번 손으로 적게 하면 eval·infer 설정이 금방 낡습니다. 그래서
     타임스탬프를 뺀 `runs/obb/<name>/weights/best.pt` 로 적으면 그 name 의 **가장 최근
     실행**에서 찾아줍니다. 타임스탬프까지 적으면 그 실행을 그대로 씁니다(고정 가능).
 
@@ -85,18 +104,6 @@ def resolve_weights(path_str) -> Path:
     if latest is not None and (latest / "weights" / path.name).exists():
         return latest / "weights" / path.name
     return path
-
-
-def roboflow_api_key() -> str:
-    """Roboflow API 키 — 보안상 yaml 이 아니라 환경변수에서만 읽습니다."""
-    key = os.environ.get("ROBOFLOW_API_KEY", "").strip()
-    if not key:
-        raise SystemExit(
-            "환경변수 ROBOFLOW_API_KEY 가 필요합니다.\n"
-            '  PowerShell:  $env:ROBOFLOW_API_KEY="xxxx"\n'
-            "  bash:        export ROBOFLOW_API_KEY=xxxx"
-        )
-    return key
 
 
 def normalize_names(names) -> dict:
@@ -115,8 +122,7 @@ class Stage:
     서브클래스는 `config_glob` 과 `run()` 만 정의하면 됩니다. 단계끼리 import 해서
     한 프로세스 안에서 이어 붙이는 것도 가능합니다:
 
-        Downloader().run(); Preprocessor("preprocess.single.yaml").run()
-        Trainer("train.single.yaml").run()
+        Preprocessor().run(); Trainer("train.single.yaml").run()
 
     config 인자를 생략하면: configs/ 의 후보가 하나뿐일 때만 자동으로 그 파일을
     읽고, 여럿이면 후보 목록과 함께 거절합니다 — 기본값을 고르는 순간

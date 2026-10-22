@@ -37,13 +37,14 @@
   </ItemGroup>
 
   <!--
-    ONNX segmentation model (YOLO26-small). It is NOT committed to this repo
-    (large binary) and is NOT bundled by the YoloDotNet submodule, so you must
-    supply it yourself: drop yolo26s-seg.onnx into src\BaslerLiveView\Models\.
-    Any *.onnx under Models\ is copied next to the executable on build.
+    ONNX models (segmentation or OBB). Not committed to this repo (large binary) and
+    not bundled by the YoloDotNet submodule: training's export (deploy_to) writes them
+    into src\BaslerLiveView\Models\, or drop yolo26s-seg.onnx there yourself.
+    Any *.onnx under Models\ is copied next to the executable on build — except
+    Models\history\ (timestamped earlier deployments, kept only for rollback).
   -->
   <ItemGroup>
-    <None Include="Models\**\*.onnx">
+    <None Include="Models\**\*.onnx" Exclude="Models\history\**">
       <Link>Models\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
@@ -53,7 +54,7 @@
     <PropertyGroup>
       <SegModelDest>$(OutDir)Models\yolo26s-seg.onnx</SegModelDest>
     </PropertyGroup>
-    <Warning Text="Segmentation model missing: place yolo26s-seg.onnx (YOLO26-small segmentation, ONNX) in src\BaslerLiveView\Models\ — it is not bundled by the YoloDotNet submodule."
+    <Warning Text="Default model missing: place yolo26s-seg.onnx in src\BaslerLiveView\Models\ (training's train.seg_all.yaml export deploys it there) — it is not bundled by the YoloDotNet submodule."
              Condition="!Exists('$(SegModelDest)')" />
   </Target>
 

@@ -11,13 +11,15 @@
          안에 들어가게 앱이 자동으로 맞춥니다. 값을 낮추면 노출 여유가 생겨 더 밝아집니다. -->
     <FrameRate>80</FrameRate>
   </Camera>
-  <Segmentation>
-    <!-- 사용할 ONNX 세그멘테이션 모델 파일 이름. 실행 파일 옆 Models\ 폴더에서 찾습니다.
-         이 이름의 .onnx 파일을 Models\ 에 넣어두면 됩니다.
-         YoloDotNet 이 모델 버전을 자동 감지하므로 지원되는 YOLO 세그 모델
-         (예: yolo26s-seg.onnx, yolov11s-seg.onnx)이면 그대로 동작합니다. -->
+  <Inference>
+    <!-- 사용할 ONNX 모델 파일 이름. 실행 파일 옆 Models\ 폴더에서 찾습니다
+         (src\BaslerLiveView\Models\ 에 두면 빌드 때 복사됨).
+         YoloDotNet 이 모델의 버전과 종류를 파일에서 알아내므로, 세그멘테이션 모델
+         (yolo26s-seg.onnx)이면 마스크, OBB 모델(yolo26s-obb.onnx)이면 회전 박스를 그립니다.
+         training 의 train.seg_all.yaml / train.obb_all.yaml export 가 이 이름 그대로
+         Models\ 에 덮어써 배포합니다(이력은 Models\history\ 에 남음). -->
     <Model>yolo26s-seg.onnx</Model>
-  </Segmentation>
+  </Inference>
   <Crop>
     <!-- 크롭 영역. 화면은 항상 '풀 프레임'을 보여주고, 이 영역은 그 위에 빨간 네모로
          표시만 됩니다(잘라내지 않음). 실제로 잘려서 쓰이는 곳은 두 군데:
@@ -49,18 +51,13 @@
          누끼와 달리 선명하게 보여야 하므로 불투명도를 따로 둡니다. -->
     <OutlinePath>datasets/reference/reference_outline.png</OutlinePath>
     <OutlineOpacity>0.9</OutlineOpacity>
-    <!-- Save Ref 용 파이썬 — 풀 프레임을 datasets\reference\reference.png 로 저장하고
-         training\tools\make_reference_cutout.py 로 누끼를 다시 만드는 데 쓸 인터프리터.
-         cv2/numpy 가 있는 training 의 uv 환경(train extra 를 설치한 것). 상대경로는 저장소 루트 기준.
-         (지금 앱에는 이 설정을 읽어 스크립트를 실행하는 코드가 없음 — 예약된 설정) -->
-    <Python>training\.venv\Scripts\python.exe</Python>
   </ReferenceOverlay>
   <Recording>
     <!-- Record 버튼이 PNG를 저장할 '기준' 폴더. 저장되는 건 크롭 전 '풀사이즈 원본'입니다
          (크롭은 라벨까지 같이 잘라야 하므로 training/preprocess.py 가 담당).
          REC 를 켤 때마다 이 폴더 아래에 세션 폴더가 새로 만들어집니다:
              datasets/raw/kimm_YYMMDD_HHMMSS/images/000001__cap_YYMMDD_HHMMSS.png
-         (파일명 앞 6자리 인덱스는 training/download.py 의 raw 파일 규약과 동일)
+         (파일명 앞 6자리 인덱스는 training/common.py 의 INDEX_RE 규약과 동일)
          상대경로는 저장소 루트(= .git 이 있는 폴더) 기준으로 풀립니다.
          라벨은 각 세션 폴더의 labels/ 에 넣고, data.yaml 을 두 줄짜리로 만들어 두면
          preprocess.py 의 소스로 그대로 읽힙니다:

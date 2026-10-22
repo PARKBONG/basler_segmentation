@@ -4,63 +4,17 @@
 # OBB 라벨은 손으로 잡은 OBB(labels/)가 아니라 seg 폴리곤(labels_seg/)에 다시 맞춘 회전
 # 사각형 — 실제 와이어 끝까지만 덮는다. val 은 train 과 겹치므로 지표는 낙관적이고 early
 # stopping 이 과적합을 못 잡음 → epochs 를 train.single(seg, 진짜 val)의 best epoch 로 고정.
-# (같은 데이터·증강이라 대용으로 씀. OBB 전용 측정 실행은 없음.) 앱은 지금 seg 모델(RunSegmentation)로 추론하므로 이 모델을 쓰려면 앱에
-# OBB 추론 경로가 필요함.
-
-stages:
-  preview_aug: false
-  train: true
-  export: true
+# (같은 데이터·증강이라 대용으로 씀. OBB 전용 측정 실행은 없음.)
+# 앱은 모델 파일에서 seg/obb 를 알아서 고른다 — 쓰려면 config.xml <Model> 을 이 파일로.
+base: base/train.yaml
 
 train:
   model: yolo26s-obb.pt
   data: ../datasets/processed_obb/kimm/data.all.yaml
   epochs: 500                # ← train.single 의 best epoch 로 바꿀 것 (끝나면 채움)
-  imgsz: 640
-  batch: -1
-  device: "0"
-  workers: 8
   patience: 0                # 0 = EarlyStopping 끔 (val 이 train 과 겹쳐 의미 없음)
   project: runs/obb
   name: yolo26s-obb-all      # runs/obb/yolo26s-obb-all/<YYMMDD_HHMMSS>/
-  resume: false
-  optimizer: auto
-  cos_lr: true
-  seed: 0
-
-  # ── 증강 — train.single.yaml 과 같게 유지 ─────────────────────────────
-  hsv_h: 0.0
-  hsv_s: 0.0
-  hsv_v: 0.6
-  degrees: 15.0
-  translate: 0.1
-  scale: 0.2
-  shear: 0.0
-  perspective: 0.0
-  flipud: 0.0
-  fliplr: 0.0
-  mosaic: 1.0
-  close_mosaic: 10
-  mixup: 0.0
-  copy_paste: 0.0
-  blur:
-    p: 0.1
-    sigma: [0.3, 1.5]
-
-# 매 val 마다 원본 4장 + 증강 12장(값 표시) 추론 격자 → <실행 폴더>/overlays/epoch_NNN.jpg
-# 와 TensorBoard Images 탭. 증강 범위는 위 train 블록 값을 그대로 씀 (epoch_overlay.py).
-overlay:
-  enabled: true
 
 export:
-  format: onnx
-  opset: 12
-  simplify: true
-  half: false
-  dynamic: false
   deploy_to: ../app/src/BaslerLiveView/Models/yolo26s-obb.onnx
-
-preview:
-  project: runs/preview
-  name: aug
-  fraction: 0.1

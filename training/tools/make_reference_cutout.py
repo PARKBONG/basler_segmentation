@@ -1,4 +1,4 @@
-"""datasets/reference/reference.png 에서 기구부(금속 튜브 + 와이어) 누끼를 딴다.
+r"""datasets/reference/reference.png 에서 기구부(금속 튜브 + 와이어) 누끼를 딴다.
 
 카메라가 eye-in-hand 로 기구에 붙어 있어서, 화면 상단의 금속 튜브는 항상
 같은 자리에 찍히고 와이어도 같은 자리에서 뻗어 나온다(길이만 변함).

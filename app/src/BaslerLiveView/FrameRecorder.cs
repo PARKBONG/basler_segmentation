@@ -189,7 +189,7 @@ public sealed class FrameRecorder : IDisposable
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
 
-        // 6-digit index prefix — same convention as training/download.py's raw files.
+        // 6-digit index prefix — same convention as training/common.py's INDEX_RE.
         var path = Path.Combine(frame.Dir, $"{frame.Index:D6}__cap_{frame.Session}.png");
         using var file = File.Create(path);
         data.SaveTo(file);

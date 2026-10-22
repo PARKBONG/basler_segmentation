@@ -1,0 +1,27 @@
+# 편집기 공통 규칙 — VS Code · Visual Studio · dotnet format 이 따른다.
+# (Python 린트는 training/pyproject.toml 의 ruff, 줄바꿈은 .gitattributes)
+root = true
+
+[*]
+charset = utf-8
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{py,cs,xaml}]
+indent_size = 4
+
+[*.sln]
+indent_style = tab
+
+[*.md]
+trim_trailing_whitespace = false   # 줄 끝 공백 두 칸 = 줄바꿈
+
+# 서드파티(벤더링·서브모듈)는 손대지 않는다
+[app/external/**]
+charset = unset
+indent_style = unset
+indent_size = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset

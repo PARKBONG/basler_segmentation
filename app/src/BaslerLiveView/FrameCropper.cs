@@ -29,7 +29,7 @@ public sealed class FrameCropper
 
     /// <summary>Requested crop size in pixels. 0 (or negative) means the full
     /// source extent on that axis — the same convention as training/preprocess.py,
-    /// so a size copied between the app and preprocess_config.yaml means the same
+    /// so a size copied between the app and training/configs/preprocess.yaml means the same
     /// thing in both places. Larger than the frame is clamped to the frame.</summary>
     public int Width { get; set; } = 640;
     public int Height { get; set; } = 640;

@@ -1,33 +1,33 @@
 """
 학습된 checkpoint 를 지정한 split(train/val/test) 에 대해 평가.
 
-Stage1/Stage2 를 명확히, 독립적으로 평가하기 위한 스크립트 (Box + Mask mAP 출력).
+seg / obb 모델 모두 (seg 는 Box + Mask mAP, obb 는 OBB mAP 출력).
 무엇을 평가할지는 전부 config(configs/eval.*.yaml — weights/data/split/imgsz/device)가
 정합니다.
 
 지표(mAP)에 더해, config 의 visualize 블록으로 **추론 결과를 이미지에 그려서**
 저장합니다 (기본 켜짐). 원본 라벨이 있으면 같은 그림에 겹쳐 그리므로 숫자만으로는
-안 보이는 실패 양상(위치는 맞는데 각도가 틀림 / 미검출 / 오검출)을 바로 볼 수 있습니다.
+안 보이는 실패 양상(끝 위치가 틀림 / 각도가 틀림 / 미검출 / 오검출)을 바로 볼 수 있습니다.
+추론은 seg 면 마스크 윤곽, obb 면 회전 사각형으로 그립니다.
 
     training/eval/<YYMMDD_HHMMSS>__<가중치>__<데이터셋>-<split>/
         summary.txt        무슨 pt · 무슨 데이터셋 · 무슨 split · 지표 (그림의 출처)
         <이미지이름>.png   초록 = 원본 라벨(GT), 빨강 = 추론 결과
 
-같은 그림을 격자로 묶어 val 결과 폴더(runs/obb/val*)에도 val_batch*_overlay.jpg 로
+같은 그림을 격자로 묶어 val 결과 폴더(runs/<task>/val*)에도 val_batch*_overlay.jpg 로
 남깁니다 — 정답과 추론을 다른 장에 그리는 Ultralytics 기본 val_batch*_labels/_pred.jpg
 는 대신 지웁니다(같은 폴더에 규약이 다른 그림이 섞이면 판단이 흐려집니다).
 단일 클래스이므로 어느 쪽 그림에도 클래스명·점수 글자는 넣지 않습니다. 다만
-visualize.baseline 을 켜면(기본) 박스마다 아래 두 꼭짓점의 y 평균 높이에 가로
-점선을 긋고 그 y 픽셀값을 적습니다 — wire 의 높이 오차를 눈으로 바로 재기 위한 것.
+visualize.baseline 을 켜면(기본) 폴리곤마다 가장 아래 두 점의 y 평균 높이에 가로
+점선을 긋고 그 y 픽셀값을 적습니다 — wire 끝 높이 오차를 눈으로 바로 재기 위한 것.
 
 데이터 위생:
-  · Stage1 은 공개 val 로 평가 (in-domain 격리 유지)      → eval.stage1.yaml
-  · Stage2 선택 지표는 in-domain val                       → eval.stage2.yaml
-  · in-domain test 는 "최종 stage2 모델"에 딱 한 번만      → eval.final.yaml
+  · 학습 중 선택 지표(best·early stop)는 val 세션         → eval.single.yaml
+  · test 세션은 측정용 모델(train.single)에 딱 한 번만    → eval.final.yaml
     이 수치로 하이퍼파라미터를 다시 만지면 그 순간 오염되어 논문에 쓸 수 없습니다.
 
 사용법:
-    python eval.py --config eval.stage1.yaml
+    python eval.py --config eval.single.yaml
     python eval.py --config eval.final.yaml     # 최종 1회만
 """
 from __future__ import annotations
@@ -107,12 +107,21 @@ class Evaluator(Stage):
 
     @staticmethod
     def pred_polygons(result) -> list:
-        """추론 결과 → [(cls, conf, [(x,y), ...]), ...]. OBB 면 회전 사각형, 아니면 xyxy."""
+        """
+        추론 결과 → [(cls, conf, [(x,y), ...]), ...].
+        OBB 면 회전 사각형, seg 면 마스크 윤곽 폴리곤(masks.xy, 원본 픽셀), 아니면 xyxy 박스.
+        """
         obb = getattr(result, "obb", None)
         if obb is not None and len(obb):
             corners = obb.xyxyxyxy.cpu().numpy().reshape(len(obb), 4, 2)
             return [(int(c), float(f), [(float(x), float(y)) for x, y in quad])
                     for quad, c, f in zip(corners, obb.cls.tolist(), obb.conf.tolist())]
+        masks = getattr(result, "masks", None)
+        if masks is not None and len(masks):
+            boxes = result.boxes
+            return [(int(c), float(f), [(float(x), float(y)) for x, y in seg])
+                    for seg, c, f in zip(masks.xy, boxes.cls.tolist(), boxes.conf.tolist())
+                    if len(seg) >= 3]
         boxes = getattr(result, "boxes", None)
         if boxes is not None and len(boxes):
             out = []
@@ -128,12 +137,12 @@ class Evaluator(Stage):
     @staticmethod
     def baseline_y(pts: list) -> float:
         """
-        OBB 아래 두 꼭짓점의 y 평균 — wire 의 '높이'를 한 숫자로 읽기 위한 값.
+        폴리곤(OBB 4점 또는 seg 윤곽)에서 가장 아래 두 점의 y 평균 — wire 끝의
+        '높이'를 한 숫자로 읽기 위한 값.
 
         꼭짓점 순서를 믿지 않고 **y 가 가장 큰 두 점**을 고릅니다 (라벨러가 찍은
-        순서·회전 방향과 무관하게 같은 값이 나오도록). 기울기가 45°를 넘으면 그 둘이
-        아래 '긴 변'이 아니라 짧은 변이 되지만, 이 프로젝트의 wire 는 거의 수평이라
-        실제로는 아래 긴 변의 두 끝점입니다.
+        순서·회전 방향과 무관하게 같은 값이 나오도록). 이 프로젝트의 wire 는 튜브에서
+        아래로 뻗어(축 약 70°) 그 둘이 와이어 끝(아래 짧은 변 / 끝 곡선)에 놓입니다.
         """
         ys = sorted(y for _x, y in pts)
         if not ys:
@@ -346,7 +355,7 @@ class Evaluator(Stage):
             self.log("[주의] test 는 최종 무편향 평가용입니다. 이 결과를 보고 "
                      "하이퍼파라미터를 다시 조정하면 오염됩니다.")
 
-        from ultralytics import YOLO   # 무거운 import 는 설정/경로 검증 뒤로
+        from ultralytics import YOLO  # 무거운 import 는 설정/경로 검증 뒤로
 
         model = YOLO(str(weights))
         m = model.val(data=str(data), split=split,
@@ -365,7 +374,7 @@ class Evaluator(Stage):
         # 시각화는 기본 켜짐 — 지표만 보고 넘어가면 "어떻게 틀렸는지"를 놓칩니다.
         # 끄려면 config 에 visualize.enabled: false.
         if (self.cfg.get("visualize") or {}).get("enabled", True):
-            # val 결과 폴더(runs/obb/val*)에도 같은 규약의 그림을 남긴다
+            # val 결과 폴더(runs/<task>/val*)에도 같은 규약의 그림을 남긴다
             run_dir = getattr(m, "save_dir", None)
             self.visualize(model, weights, data, split, lines,
                            Path(run_dir) if run_dir else None)

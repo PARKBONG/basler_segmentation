@@ -1,69 +1,17 @@
 # yolo26s-seg 파인튜닝 — 측정용 (val/test 세션을 떼어 둔 버전).
 #   python train.py --config train.single.yaml
-# (--config 는 필수입니다. 생략하면 train.py 가 오류로 멈춥니다 — 조용한 기본값 없음)
+# 공통 설정(증강·export·overlay)은 base/train.yaml — 여기는 이 실행만의 값.
 # 데이터셋 정의(소스·분할·크롭)는 preprocess.yaml 이 소유하며, 그 산출물을 data 로 가리킵니다.
 # 배포용(전체 데이터) 학습은 train.seg_all.yaml / train.obb_all.yaml.
-
-# 무엇을 돌릴지 — 블록 자체가 필수이며, 키를 오타내면 오류로 알려줍니다.
-# 재학습 없이 export 만: train: false, export: true
-stages:
-  preview_aug: false         # 증강이 어떻게 먹는지 먼저 눈으로 볼 때만 true
-  train: true
-  export: true
+base: base/train.yaml
 
 train:
   model: yolo26s-seg.pt      # 시작 가중치 — 앱이 seg 모델로 추론. 없으면 Ultralytics가 자동 다운로드
   data: ../datasets/processed_seg/data.yaml   # preprocess.py 산출물 (val/test = preprocess.yaml 의 세션)
   epochs: 500                # 상한 — 실제 종료는 아래 patience 의 early stopping
-  imgsz: 640                 # 앱이 640으로 추론 → 640 유지 권장
-  batch: -1                  # -1 = GPU 메모리에 맞춰 AutoBatch. 정수로 고정 가능
-  device: "0"                # GPU 인덱스. 예: "0" 또는 "0,1", CPU는 "cpu"
-  workers: 8
   patience: 50               # val(떼어 둔 세션) 지표가 이만큼 epoch 동안 안 나아지면 멈춤 — 과적합 방지.
                              # 여기서 나온 best epoch 를 train.*_all.yaml 의 epochs 로 씀
   project: runs/segment      # 결과 저장 루트 (training/ 기준)
   name: yolo26s-seg-finetune # 실제 저장 위치: runs/segment/<name>/<YYMMDD_HHMMSS>/
-  resume: false              # true면 마지막 체크포인트에서 이어서
-  optimizer: auto
-  cos_lr: true
-  seed: 0
 
-  # ── 증강 (Ultralytics 온라인 증강) ────────────────────────────────────
-  # 카메라가 기구에 붙어(eye-in-hand) 와이어의 각도·크기·좌우가 거의 고정 — 실제로 생기는
-  # 변화(조금 밀림·휨·아크 밝기·살짝 흐림)만 흔든다. 값을 바꾸면 preview_aug 로 확인.
-  hsv_h: 0.0                 # 흑백 카메라라 색상/채도 증강은 의미 없음
-  hsv_s: 0.0
-  hsv_v: 0.6                 # 밝기 — 아크 글레어 편차가 큼
-  degrees: 15.0              # 회전(도) — 와이어가 휘는 범위
-  translate: 0.1             # 이동 ±비율 — 앱 크롭 위치(40%)와 학습 크롭(50%) 차이(약 9%·6%)도 덮음
-  scale: 0.2                 # 확대/축소 ±비율 — 와이어 크기는 거의 고정
-  shear: 0.0
-  perspective: 0.0
-  flipud: 0.0                # 위아래 뒤집기 — 실제로 없는 장면
-  fliplr: 0.0                # 좌우 뒤집기 — 와이어가 반대로 기운 장면은 실제로 없음
-  mosaic: 1.0                # 4장 합성. close_mosaic epoch 남기고 자동 종료
-  close_mosaic: 10           # 마지막 N epoch 은 mosaic 끔
-  mixup: 0.0
-  copy_paste: 0.0
-  blur:                      # 초점 살짝 흐림 — train.py 가 albumentations GaussianBlur 로 넘김
-    p: 0.1                   # 적용 확률
-    sigma: [0.3, 1.5]        # 가우시안 sigma 범위 (학습 해상도 640 기준 px)
-
-# 매 val 마다 원본 4장 + 증강 12장(값 표시) 추론 격자 → <실행 폴더>/overlays/epoch_NNN.jpg
-# 와 TensorBoard Images 탭. 증강 범위는 위 train 블록 값을 그대로 씀 (epoch_overlay.py).
-overlay:
-  enabled: true
-
-export:
-  format: onnx
-  opset: 12                  # YoloDotNet(ONNX Runtime) 호환. 필요시 조정
-  simplify: true
-  half: false                # FP16 export. 런타임이 지원할 때만 true
-  dynamic: false
-  # 측정용이라 앱으로 복사하지 않음 (배포는 train.seg_all.yaml).
-
-# stages.preview_aug 설정. 실제 학습 결과(runs/segment)와 섞이지 않게 따로 나갑니다.
-preview:
-  project: runs/preview
-  name: aug
-  fraction: 0.1              # 미리보기용으로 학습셋의 일부만 사용 (빨리 끝내려고)
+# export: 측정용이라 앱으로 복사하지 않음 (deploy_to 없음 — 배포는 train.seg_all.yaml).

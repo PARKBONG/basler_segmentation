@@ -19,7 +19,6 @@ basler_segmentation/
 |---|---|---|
 | `raw/kimm_YYMMDD_HHMMSS[_메모]/images/` | 녹화 세션 원본 (크롭 전 풀사이즈 PNG) | 앱 REC |
 | `raw/kimm_*/labels/` · `labels_seg/` | 손으로 잡은 OBB · 와이어 seg 폴리곤 | 라벨러 |
-| `raw/rf_*/` | 공개 데이터셋 (Roboflow) | `training/download.py` |
 | `raw/_removed_black/` · `_removed_manual/` | 빼 둔 프레임 (되돌리기용) | 정리 작업 · 라벨러 삭제 |
 | `processed_seg/` · `processed_obb/` | 학습용 산출물 (크롭·분할) | `training/preprocess.py` |
 | `reference/` | 기구부(튜브+와이어) 기준 이미지·누끼·윤곽선 | `training/tools/make_reference_cutout.py` |
@@ -28,10 +27,11 @@ basler_segmentation/
 
 ```powershell
 cd training
-uv sync --extra train --extra export      # 첫 설치 (torch cu128 · ultralytics · ONNX)
+uv sync --extra train --extra export      # 첫 설치 (torch cu128 · ultralytics · ONNX · pytest · ruff)
 uv run labeller/server.py                 # 라벨러 → http://localhost:8765
 uv run preprocess.py                      # raw → processed_seg
 uv run train.py --config train.single.yaml
+uv run pytest                             # 파이프라인 테스트 (GPU·데이터 불필요)
 ```
 
 자세한 건 [training/README.md](training/README.md). VS Code 에서는 `Ctrl+Shift+P → Tasks: Run Task` 의
@@ -47,4 +47,10 @@ dotnet build app/basler_segmentation.sln
 `app/external/` 에 Basler pylon SDK(필요한 부분만 벤더링)와 YoloDotNet(submodule)이 있다.
 설정은 [app/src/BaslerLiveView/config/config.xml](app/src/BaslerLiveView/config/config.xml) —
 녹화 폴더·기준 이미지 같은 상대경로는 저장소 루트(`.git` 이 있는 폴더) 기준.
+추론 모델은 `<Inference><Model>` — seg / obb 모델을 파일에서 알아서 구분한다.
 자세한 건 [app/src/BaslerLiveView/README.md](app/src/BaslerLiveView/README.md).
+
+## 저장소 규칙
+
+- 줄바꿈 `.gitattributes`, 들여쓰기·인코딩 `.editorconfig`, Python 린트 `training/pyproject.toml` (ruff).
+- CI(`.github/workflows/ci.yml`): push 마다 `training` ruff · pytest, `app` 빌드 · `dotnet format` 확인.

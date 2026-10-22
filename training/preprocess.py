@@ -1,15 +1,16 @@
 """
-공개 + 로컬 데이터를 학습용 YOLO seg 데이터셋으로 전처리(크롭 · 리사이즈 · 클래스 통일).
+원본 데이터를 학습용 YOLO seg/obb 데이터셋으로 전처리(크롭 · 리사이즈 · 클래스 통일 · 분할).
 
 폴더 규약:
-- 원천은 datasets/raw/<이름>/ (kimm = 앱 REC 카메라 원본, rf_* = download.py 공개셋).
+- 원천은 datasets/raw/<이름>/ (kimm = 앱 REC 녹화 세션들, 글롭 raw/kimm_*).
 - 산출물은 소스별로 out/<이름>/images|labels/{train,val,test} 에 씁니다.
 - out/data.yaml 하나가 디스크에 있는 소스 산출물 전체를 묶어 train.py 가 읽습니다
   (Ultralytics 는 각 split 에 폴더 목록을 지원). test 는 있을 때만 키를 넣습니다.
 
 설계 원칙:
 - 전처리에는 스테이지가 없습니다 — configs/preprocess.yaml 하나가 소스 구성·크롭·비율
-  등 전부를 소유하고, 소스마다 raw 를 processed/<이름>/ 으로 한 번만 굽습니다.
+  등 전부를 소유하고, 소스마다 raw 를 out/<이름>/ 으로 한 번만 굽습니다
+  (out = processed_seg, OBB 는 --task obb --out ../datasets/processed_obb).
   스테이지(공개 warm-up → in-domain 적응)는 train/eval config 가 어느 data.yaml 을
   읽을지로 정합니다: 소스별 processed/<이름>/data.yaml + 통합 processed/data.yaml.
   config 후보가 하나뿐이라 --config 없이 자동으로 읽힙니다.
@@ -62,10 +63,9 @@ from pathlib import Path
 
 import yaml
 
-from common import IMG_EXTS, INDEX_RE, Stage, normalize_names, resolve
+from common import IMG_EXTS, INDEX_RE, Stage, normalize_names
 
-
-# ── 크롭 기하 (순수 함수 — selftest.py 가 직접 검증) ─────────────────────────
+# ── 크롭 기하 (순수 함수 — tests/ 가 직접 검증) ────────────────────────────
 
 def crop_rect(src_w: int, src_h: int, crop: dict) -> tuple[int, int, int, int]:
     """
@@ -152,9 +152,12 @@ def clip_polygon(points: list, x0: float, y0: float, x1: float, y1: float) -> li
     그대로 둡니다(와이어처럼 가늘고 긴 대상에서는 거의 문제가 되지 않음).
     """
     def inside(p, edge):
-        if edge == 0: return p[0] >= x0
-        if edge == 1: return p[0] <= x1
-        if edge == 2: return p[1] >= y0
+        if edge == 0:
+            return p[0] >= x0
+        if edge == 1:
+            return p[0] <= x1
+        if edge == 2:
+            return p[1] >= y0
         return p[1] <= y1
 
     def intersect(p, q, edge):
@@ -310,7 +313,7 @@ class Cropper:
 
     흩어져 있던 설정 파싱·인라인 크롭 로직·카운터를 묶은 것으로, 기하 계산 자체는
     모듈의 순수 함수(crop_rect · auto_crop_rect · transform_label)를 그대로 씁니다
-    (selftest 가 직접 검증). 설정은 소스마다 독립입니다 — 공유 기본값 없음.
+    (tests/ 가 직접 검증). 설정은 소스마다 독립입니다 — 공유 기본값 없음.
     """
 
     def __init__(self, crop: dict | None) -> None:
@@ -333,7 +336,7 @@ class Cropper:
         if not self.enabled:
             return None, lines
 
-        from PIL import Image   # 크롭을 쓸 때만 필요 (pillow 미설치여도 병합은 동작)
+        from PIL import Image  # 크롭을 쓸 때만 필요 (pillow 미설치여도 병합은 동작)
         with Image.open(img) as im:
             src_w, src_h = im.width, im.height
 
@@ -378,10 +381,9 @@ class Preprocessor(Stage):
     소스들을 소스별 산출물 + data.yaml 의 학습용 데이터셋으로 만드는 단계.
 
     config 는 configs/preprocess.yaml 하나뿐입니다 (후보 1개 → 인자 없이 자동).
-    전처리에는 스테이지가 없습니다 — 소스마다 raw 를 processed/<이름>/ 으로 한 번
-    굽고, 스테이지 구분은 train/eval config 가 어느 data.yaml 을 읽을지로 정합니다
-    (소스별 data.yaml + 전체 통합 data.yaml 을 모두 씁니다). download 쪽과는
-    datasets/raw/<이름>/ 경로 규약만 공유합니다.
+    전처리에는 스테이지가 없습니다 — 소스마다 raw 를 out/<이름>/ 으로 한 번
+    굽고, 무엇으로 학습할지는 train/eval config 가 어느 data.yaml 을 읽을지로 정합니다
+    (소스별 data.yaml · data.all.yaml + 전체 통합 data.yaml 을 모두 씁니다).
     """
 
     config_glob = "preprocess.yaml"
@@ -486,7 +488,6 @@ class Preprocessor(Stage):
             return {"train": "images"}, normalize_names(src["names"])
         raise FileNotFoundError(
             f"{src['name']}: data.yaml 이 없습니다 → {dy_path}\n"
-            f"공개셋이면 python download.py 를 먼저 돌리세요.\n"
             f"내 카메라 원본(kimm)이면 두 줄짜리로 만들어 두면 됩니다 "
             f"(라벨러가 띄울 때 자동으로 만듭니다):\n"
             f"    names: {{0: wire}}\n"
@@ -809,8 +810,9 @@ class Preprocessor(Stage):
     def write_data_yaml(self) -> tuple[list, list, list]:
         """
         학습용 data.yaml 을 다시 쓴다 — 두 종류:
-        · out/<이름>/data.yaml   소스 하나짜리 (train.stage1 → rf_a, train.stage2 → kimm)
-        · out/data.yaml          디스크의 소스 산출물 전체 통합본 (train.single)
+        · out/<이름>/data.yaml      소스 하나짜리 (eval.final → kimm test)
+        · out/<이름>/data.all.yaml  그 소스 train+val+test 전부 (train.*_all)
+        · out/data.yaml             디스크의 소스 산출물 전체 통합본 (train.single)
         스테이지 구분은 여기가 아니라 train/eval config 가 어느 파일을 읽을지로 정합니다.
         """
         def has_images(d: Path) -> bool:
@@ -872,7 +874,7 @@ class Preprocessor(Stage):
         묶어 근중복이 train/val 에 갈라 들어가는 누수를 막습니다. 그 외 파일은
         stem 자체가 그룹(= 이미지 단위 분할)입니다.
 
-        download.py 가 붙이는 000000__ 인덱스 접두어는 rf 사본마다 달라 그룹을
+        파일명 앞 000000__ 인덱스 접두어(INDEX_RE)는 rf 사본마다 달라 그룹을
         깨므로 rf 사본에서만 벗깁니다. 그 외 파일(예: 앱 캡처)은 접두어를 포함한
         stem 전체가 그룹이어야 합니다 — 캡처 파일명은 인덱스를 빼면 세션
         타임스탬프만 남아 세션 전체가 한 그룹으로 뭉쳐 버리기 때문입니다.
@@ -1059,11 +1061,11 @@ class Preprocessor(Stage):
             # 빈 val 로 학습에 들어가면 Ultralytics 가 데이터셋 빌드에서 죽습니다.
             # 산출물은 이미 다 썼으므로 여기서 멈춰도 이번 작업은 보존됩니다.
             self.fail(
-                f"val 산출물이 하나도 없습니다 — 이 data.yaml 로 train.py 를 "
-                f"돌리면 빈 검증셋으로 죽습니다.\n"
-                f"  val_ratio > 0 인 소스를 처리해 val 을 만들어 두세요.\n"
-                f"  (targets 로 일부만 굽는 중이었다면 먼저 전체를 한 번 처리해야 합니다. "
-                f"이번에 만든 train 산출물은 그대로 유지됩니다.)"
+                "val 산출물이 하나도 없습니다 — 이 data.yaml 로 train.py 를 "
+                "돌리면 빈 검증셋으로 죽습니다.\n"
+                "  val_ratio > 0 인 소스를 처리해 val 을 만들어 두세요.\n"
+                "  (targets 로 일부만 굽는 중이었다면 먼저 전체를 한 번 처리해야 합니다. "
+                "이번에 만든 train 산출물은 그대로 유지됩니다.)"
             )
         self.log("다음: python train.py --config <train.*.yaml>")
 
