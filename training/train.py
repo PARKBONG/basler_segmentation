@@ -350,6 +350,7 @@ class Trainer(Stage):
             simplify=ex.get("simplify", True),
             half=ex.get("half", False),
             dynamic=ex.get("dynamic", False),
+            nms=ex.get("nms", False),   # False = YOLO26 end-to-end 헤드 (앱 YoloDotNet 이 읽는 형식)
         ))
         self.log(f"생성: {exported}")
 

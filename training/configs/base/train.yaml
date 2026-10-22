@@ -56,6 +56,9 @@ overlay:
 export:
   format: onnx
   opset: 12                  # YoloDotNet(ONNX Runtime) 호환
+  nms: false                 # YOLO26 의 NMS 없는 end-to-end 헤드로 (출력 [1, 300, 38]) — 앱의
+                             # YoloDotNet V26 모듈은 이 형식만 읽는다. 기본값(None)은 NMS 전
+                             # 날것 출력 [1, 37, 8400] 이라 앱에서 IndexOutOfRange 로 죽는다
   simplify: true
   half: false                # FP16 export. 런타임이 지원할 때만 true
   dynamic: false
