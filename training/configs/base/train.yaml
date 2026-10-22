@@ -25,15 +25,18 @@ train:
   hsv_h: 0.0                 # 흑백 카메라라 색상/채도 증강은 의미 없음
   hsv_s: 0.0
   hsv_v: 0.6                 # 밝기 — 아크 글레어 편차가 큼
-  degrees: 15.0              # 회전(도) — 와이어가 휘는 범위
+  degrees: 10.0              # 회전(도) — 라벨 7,667장의 와이어 축은 중앙값(69°)에서 p90 5° · p99 7°
+                             # 안쪽. 그보다 조금 넓게.
   translate: 0.1             # 이동 ±비율 — 앱 크롭 위치(40%)와 학습 크롭(50%) 차이(약 9%·6%)도 덮음
   scale: 0.2                 # 확대/축소 ±비율 — 와이어 크기는 거의 고정
   shear: 0.0
   perspective: 0.0
   flipud: 0.0                # 위아래 뒤집기 — 실제로 없는 장면
   fliplr: 0.0                # 좌우 뒤집기 — 와이어가 반대로 기운 장면은 실제로 없음
-  mosaic: 1.0                # 4장 합성. close_mosaic epoch 남기고 자동 종료
-  close_mosaic: 10           # 마지막 N epoch 은 mosaic 끔
+  mosaic: 0.5                # 4장을 2×2 로 이어 붙여 한 장으로 만들 확률. 1.0 이면 원본 그대로의
+                             # 장면을 거의 못 봄 — 특히 early stop 으로 close_mosaic 구간(epochs
+                             # 마지막 N)에 못 닿는 train.single 에서. 절반은 원본 장면으로.
+  close_mosaic: 10           # 마지막 N epoch 은 mosaic 끔 (epochs 기준 — *_all 에서만 실제로 닿음)
   mixup: 0.0
   copy_paste: 0.0
   blur:                      # 초점 살짝 흐림 — train.py 가 albumentations GaussianBlur 로 넘김

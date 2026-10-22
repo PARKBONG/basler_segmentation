@@ -165,6 +165,39 @@ class Trainer(Stage):
     # -- 단계 ------------------------------------------------------------
 
     @staticmethod
+    def shorten_plot_names() -> None:
+        """
+        Ultralytics 의 train_batch*/val_batch* 그림에 찍히는 파일명을 짧게
+        (`kimm__000039__cap_261014_174102` → `000039_174102`, 번호_세션시각).
+        그대로는 이름이 칸보다 길어 옆 칸으로 넘친다 — 글꼴 크기와 40자 제한이 Ultralytics
+        안에 고정돼 있어, 그림 함수에 넘기는 이름만 바꾼다 (학습·데이터에는 영향 없음).
+        """
+        import importlib
+        import re
+
+        pat = re.compile(r"(\d+)__cap_\d{6}_(\d{6})")
+
+        def short(p) -> str:
+            stem = Path(str(p)).stem
+            m = pat.search(stem)
+            return f"{m.group(1)}_{m.group(2)}" if m else stem[-16:]
+
+        for name in ("ultralytics.models.yolo.detect.train", "ultralytics.models.yolo.detect.val",
+                     "ultralytics.models.yolo.obb.val"):
+            mod = importlib.import_module(name)
+            orig = mod.plot_images
+            if getattr(orig, "_short_names", False):
+                continue
+
+            def wrapped(*args, _orig=orig, **kw):
+                if kw.get("paths") is not None:
+                    kw["paths"] = [short(p) for p in kw["paths"]]
+                return _orig(*args, **kw)
+
+            wrapped._short_names = True
+            mod.plot_images = wrapped
+
+    @staticmethod
     def apply_blur(cfg: dict) -> None:
         """
         config 의 `blur: {p, sigma: [lo, hi]}` → Ultralytics `augmentations`
@@ -209,6 +242,7 @@ class Trainer(Stage):
             resume=False,
         )
         self.apply_blur(cfg)
+        self.shorten_plot_names()
 
         from ultralytics import YOLO
 
@@ -241,6 +275,7 @@ class Trainer(Stage):
         self.log(f"데이터셋: {cfg['data']}")
         self.log(f"결과 폴더: {Path(cfg['project']) / cfg['name']}")
         self.apply_blur(cfg)
+        self.shorten_plot_names()
 
         from ultralytics import YOLO, settings
 

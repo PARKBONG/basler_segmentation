@@ -103,7 +103,7 @@ datasets/
   데이터를 다 넣고 다시 학습한다. `*_all` 은 val 이 train 과 겹쳐 early stop 이 과적합을 못 잡기 때문.
 - **공통 설정**은 `configs/base/train.yaml` — 각 config 는 `base: base/train.yaml` 로 상속하고 다른 값만
   적는다 (dict 는 키별로 덮어씀). 증강을 바꾸면 세 학습에 같이 반영된다.
-- **증강**: 회전 15° · 이동 0.1 · 확대 0.2 · 밝기 0.6 · 블러 10%(albumentations) · mosaic. 좌우/상하
+- **증강**: 회전 10°(실제 각도 p99 7°) · 이동 0.1 · 확대 0.2 · 밝기 0.6 · 블러 10%(albumentations) · mosaic 50%. 좌우/상하
   반전은 끔 (실제로 없는 장면). offline 증강은 하지 않는다 — Ultralytics 가 매 epoch 새로 증강.
 - **보기**: TensorBoard(`uv run tensorboard --logdir runs` 또는 task) 와, 매 val 마다
   `<실행 폴더>/overlays/epoch_NNN.jpg` (원본 4장 + 증강 12장, 증강 값 표시, 초록 = 정답). 끝나면 `best.jpg`.
