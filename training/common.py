@@ -18,6 +18,7 @@ yaml **내용물**의 경로(../datasets/… 등)는 configs/ 가 아니라 trai
 from __future__ import annotations
 
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +26,12 @@ import yaml
 
 HERE = Path(__file__).resolve().parent
 CONFIG_DIR = HERE / "configs"
+
+# 한국어 Windows 콘솔(cp949)은 '—' 같은 글자를 못 찍어 print 가 예외로 죽는다 — 모든 스크립트가
+# 이 모듈을 import 하므로 여기서 한 번, 못 찍는 글자만 ? 로 바꾸게 한다.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(errors="replace")
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 

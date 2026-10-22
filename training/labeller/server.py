@@ -570,6 +570,11 @@ def make_handler(source: Source, ref: dict | None = None):
 
 
 def main() -> None:
+    # 한국어 Windows 콘솔(cp949)은 '—' 같은 글자를 못 찍어 print 가 예외로 죽는다 — 못 찍는
+    # 글자만 ? 로 바꾼다 (common.py 와 같은 처리; 라벨러는 common 을 import 하지 않음)
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     ap = argparse.ArgumentParser(description="OBB 라벨러 (raw/<source>/images 대상)")
     ap.add_argument("--source", default="kimm",
                     help="configs/preprocess.yaml 의 소스 이름 (기본: kimm). 그 소스의 "
