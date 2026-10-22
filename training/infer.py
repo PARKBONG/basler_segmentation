@@ -117,14 +117,14 @@ def main() -> None:
         im = render.shapes(r)
         items = [(name, None)]
         for d in render.detections(r):
-            text = f"{d['name']} {d['conf']:.2f}"
+            items.append((f"{d['name']} {d['conf']:.2f}", d["color"]))
             if d["tip"] is not None:
+                # 끝점 좌표는 한 줄씩 (색 네모 없는 줄) — crop 은 크롭 그림 기준, full 은 원본 기준
                 x, y = d["tip"]
                 render.draw_tip(im, d["tip"], d["color"])
-                text += f"  tip ({x:.1f}, {y:.1f})"
                 if crop:
-                    text += f"  full ({x + offset[0]:.1f}, {y + offset[1]:.1f})"
-            items.append((text, d["color"]))
+                    items.append((f"crop ({x:.1f}, {y:.1f})", None))
+                items.append((f"full ({x + offset[0]:.1f}, {y + offset[1]:.1f})", None))
         if len(items) == 1:
             items.append(("no detection", None))
         return render.put_labels(im, items, top=True)
