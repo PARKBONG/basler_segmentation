@@ -15,8 +15,10 @@ basler_segmentation/
 ## datasets/
 
 데이터는 용량 때문에 git 에 넣지 않는다 (`.gitignore`). 예외로 샘플 1장
-(`raw/kimm_260928_204214/` 의 `000001__…` 이미지 + `labels/` · `labels_seg/`)만 들어 있어, 새로 clone 한 곳에서도
-라벨러·전처리가 바로 돈다 — 실제 데이터는 원본 PC 의 `datasets/` 를 통째로 복사해 온다. 폴더 규약:
+(`raw/kimm_260928_204214/` 의 `000001__…` 이미지 + `labels/` · `labels_seg/`)와 기준 레이어 4개
+(`reference/reference_{cutout,outline,tube,wire}.png` — 앱 기준 오버레이 · 라벨러 기준 와이어)만 들어 있어,
+새로 clone 한 곳에서도 앱·라벨러·전처리가 바로 돈다 — 실제 데이터는 원본 PC 의 `datasets/` 를 통째로
+복사해 온다. 폴더 규약:
 
 | 경로 | 내용 | 만드는 쪽 |
 |---|---|---|

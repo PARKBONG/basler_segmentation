@@ -24,6 +24,14 @@
 !/datasets/raw/kimm_260928_204214/
 /datasets/raw/kimm_260928_204214/*/*
 !/datasets/raw/kimm_260928_204214/*/000001__cap_260928_204214.*
+# 기구부 기준 레이어 — 앱 기준 오버레이(cutout · outline)와 라벨러 기준 와이어(tube · wire).
+# 원본 reference.png 와 미리보기는 빼 둔다 (make_reference_cutout.py 로 다시 만들 때만 필요).
+!/datasets/reference/
+/datasets/reference/*
+!/datasets/reference/reference_cutout.png
+!/datasets/reference/reference_outline.png
+!/datasets/reference/reference_tube.png
+!/datasets/reference/reference_wire.png
 
 # ----------------------------------------------------------------------------
 # training/ — 코드·설정만 추적, 산출물·환경은 제외
