@@ -45,7 +45,14 @@ uv run pytest                             # 파이프라인 테스트 (GPU·데�
 ## app/
 
 ```powershell
-git submodule update --init               # app/external/YoloDotNet
+# app/external/YoloDotNet — 빌드에 쓰는 두 폴더만 받는다 (~1MB).
+# 그냥 `git submodule update --init` 하면 테스트용 ONNX 모델까지 ~500MB 를 받는다.
+git submodule init
+git clone --filter=blob:none --no-checkout https://github.com/NickSwardh/YoloDotNet.git app/external/YoloDotNet
+git -C app/external/YoloDotNet sparse-checkout set YoloDotNet YoloDotNet.ExecutionProvider.DirectML
+git submodule update --force
+git submodule absorbgitdirs
+
 dotnet build app/basler_segmentation.sln
 ```
 

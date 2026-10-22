@@ -1,3 +1,4 @@
 [submodule "include/YoloDotNet"]
 	path = app/external/YoloDotNet
 	url = https://github.com/NickSwardh/YoloDotNet.git
+	shallow = true
