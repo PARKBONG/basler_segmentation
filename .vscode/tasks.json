@@ -55,34 +55,68 @@
       ],
       "default": "train.single.yaml"
     },
+    // 아래 파일 목록 드롭다운은 확장 "Command Variable"(rioj7.command-variable) 이 필요 —
+    // .vscode/extensions.json 추천 목록에 있음. 목록은 실행할 때마다 디스크에서 새로 찾는다.
     {
       "id": "weights",
-      "type": "promptString",
-      "description": "가중치 — 타임스탬프 빼고 적으면 최신 실행. 예: runs/segment/yolo26s-seg-all/weights/best.pt, runs/obb/yolo26s-obb-all/weights/best.pt",
-      "default": "runs/segment/yolo26s-seg-finetune/weights/best.pt"
+      "type": "command",
+      "command": "extension.commandvariable.file.pickFile",
+      "args": {
+        "description": "가중치 (runs/<task>/<name>/<시각>/weights/*.pt) — 입력해서 거르기",
+        "include": "training/runs/**/weights/*.pt",
+        "display": "transform",
+        "valueTransform": { "text": "${file}" },
+        "labelTransform": {
+          "text": "${relativeFile}",
+          "apply": [
+            { "find": "\\\\", "replace": "/", "flags": "g" },
+            { "find": "^training/runs/", "replace": "" }
+          ]
+        },
+        "keyRemember": "weights"
+      }
     },
     {
       "id": "image",
-      "type": "promptString",
-      "description": "사진 파일 경로",
-      "default": "../datasets/raw/kimm_261019_161818/images/000270__cap_261019_161818.png"
+      "type": "command",
+      "command": "extension.commandvariable.file.pickFile",
+      "args": {
+        "description": "사진 (datasets/raw/kimm_*/images) — 파일명 일부(예: 161818 000270)를 입력해서 거르기",
+        "include": "datasets/raw/kimm_*/images/*.{png,jpg,bmp}",
+        "display": "fileName",
+        "keyRemember": "image"
+      }
     },
     {
       "id": "session",
-      "type": "promptString",
-      "description": "세션 폴더 (datasets/raw/kimm_…)",
-      "default": "../datasets/raw/kimm_261019_161818"
+      "type": "command",
+      "command": "extension.commandvariable.file.pickFile",
+      "args": {
+        "description": "세션 폴더 (datasets/raw/kimm_*)",
+        "include": "datasets/raw/kimm_*/data.yaml",
+        "display": "transform",
+        "valueTransform": { "text": "${fileDirname}" },
+        "labelTransform": { "text": "${fileDirname}", "find": "^.*[\\\\/]", "replace": "" },
+        "keyRemember": "session"
+      }
     },
     {
       "id": "crop",
-      "type": "promptString",
-      "description": "크롭 'W H CX% CY%' (예: 1280 1280 40 40) — auto = preprocess.yaml 값, none = 크롭 안 함",
+      "type": "pickString",
+      "description": "크롭 'W H CX% CY%'",
+      "options": [
+        { "label": "auto — preprocess.yaml 값 (학습과 같은 크롭)", "value": "auto" },
+        { "label": "1280 1280 40 40 — 앱 config.xml 크롭 위치", "value": "1280 1280 40 40" },
+        { "label": "1280 1280 50 50 — 정중앙", "value": "1280 1280 50 50" },
+        { "label": "none — 크롭 안 함 (원본 전체)", "value": "none" }
+      ],
       "default": "auto"
     },
     {
       "id": "fps",
-      "type": "promptString",
+      "type": "pickString",
       "description": "동영상 fps",
+      "options": ["5", "10", "15", "30"],
       "default": "5"
     }
   ]

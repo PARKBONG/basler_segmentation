@@ -1,0 +1,4 @@
+{
+  // tasks.json 의 파일 드롭다운(가중치·사진·세션 고르기)에 필요
+  "recommendations": ["rioj7.command-variable"]
+}
