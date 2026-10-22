@@ -1,0 +1,11 @@
+started: null
+saved: '2026-10-22T15:30:15.155397+09:00'
+run: runs/segment/yolo26s-seg-all/261022_151611
+config: null
+git:
+  commit: 6a3139a13097bdb90592dceb6721e1869e279536
+  branch: train
+  subject: 'feat(infer): 끝점 좌표를 줄 나눠 표기 (점수 / crop / full) — 앱과 같은 배치'
+  dirty: null
+  uncommitted: null
+  note: run_info.yaml 이전 실행 — Ultralytics ckpt['git'] (커밋 안 된 수정 여부 모름)

@@ -291,6 +291,24 @@ class Trainer(Stage):
             "학습률": {"lr (pg 짝수 = 헤드 ×3)": ["Multiline", [r"^lr/pg\d+$"]]},
         })
 
+    def record_run(self, trainer, cfg: dict) -> None:
+        """
+        학습 시작 시 실행 폴더에 run_info.yaml (커밋 · 커밋 안 된 수정 · config · 데이터 장수),
+        수정이 있으면 code.patch 도 (provenance.py). Ultralytics 가 실행 폴더를 정한 뒤라
+        콜백에서 한다 — 미리 만들면 Ultralytics 가 이름 뒤에 2 를 붙여 새 폴더를 만든다.
+        """
+        import provenance
+
+        try:
+            info = provenance.write_run_info(Path(trainer.save_dir), self.config_path, self.cfg,
+                                             Path(cfg["data"]))
+        except Exception as e:   # 기록 실패로 학습을 죽이지 않는다
+            self.log(f"run_info 기록 실패 (학습은 계속): {e}")
+            return
+        git = info["git"]
+        self.log(f"코드: {(git['commit'] or '?')[:7]} ({git['branch']})"
+                 + (f" + 커밋 안 된 수정 {len(git['uncommitted'])}개 → code.patch" if git["dirty"] else ""))
+
     def train(self) -> Path:
         """파인튜닝. best.pt 경로를 돌려준다."""
         weights = self.start_weights()      # 설정 검증을 무거운 import 앞에 둔다
@@ -312,6 +330,7 @@ class Trainer(Stage):
             settings.update(want)
 
         model = YOLO(weights)
+        model.add_callback("on_pretrain_routine_start", lambda tr: self.record_run(tr, cfg))
         model.add_callback("on_train_start", self.tensorboard_layout)
         if (self.cfg.get("overlay") or {}).get("enabled"):
             # 매 val 마다 원본 4장 + 증강 12장 추론 격자 → <실행 폴더>/overlays/, TensorBoard
@@ -353,6 +372,15 @@ class Trainer(Stage):
             nms=ex.get("nms", False),   # False = YOLO26 end-to-end 헤드 (앱 YoloDotNet 이 읽는 형식)
         ))
         self.log(f"생성: {exported}")
+
+        # 출처(커밋 · dirty · 실행 폴더 · config)를 .onnx 메타데이터에 — 앱에 들어간 파일만
+        # 봐도 어떤 학습에서 나왔는지 알 수 있게
+        import provenance
+
+        info = provenance.read(weights)
+        provenance.stamp_onnx(exported, info)
+        commit = ((info.get("git") or {}).get("commit") or "unknown")[:7]
+        self.log(f"출처 기록: {info.get('run')} @ {commit}")
 
         if deploy_to:
             # 앱은 고정 이름(deploy_to)을 읽는다 (config.xml <Model>) — 그 이름을 새 모델로

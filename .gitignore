@@ -43,6 +43,8 @@ app/src/**/obj/
 # ONNX models — not committed; the default is auto-copied from the YoloDotNet
 # submodule's assets at build time (see BaslerLiveView.csproj).
 *.onnx
+# 단, 보관 가중치(root weights/)는 git 으로 관리 (Git LFS — .gitattributes)
+!/weights/**/*.onnx
 
 # Basler Pylon SDK (vendored under app/external/pylon/)
 # Keep ONLY the minimal set BaslerLiveView needs to build + run (USB3 / GigE):

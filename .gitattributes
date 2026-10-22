@@ -24,3 +24,7 @@
 *.onnx      binary
 *.pt        binary
 *.zip       binary
+
+# 보관 가중치 (root weights/) — Git LFS. 커밋에는 포인터만, 파일은 LFS 저장소로
+weights/**/*.pt    filter=lfs diff=lfs merge=lfs -text
+weights/**/*.onnx  filter=lfs diff=lfs merge=lfs -text
