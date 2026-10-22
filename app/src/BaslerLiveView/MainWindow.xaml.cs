@@ -375,12 +375,13 @@ public partial class MainWindow : Window
             // images will be cut down to, so the model sees at inference exactly the
             // framing it was trained on. Use the toolbar sliders to find it, then put
             // the same numbers into training/configs/preprocess.yaml: identical 0–100% convention.
-            var cropped = _cropper.Crop(width, height, bgra, out int cw, out int ch);
+            var cropped = _cropper.Crop(width, height, bgra, out int cw, out int ch, out int cx, out int cy);
 
             // Submit() copies the pixels out of the reused buffer immediately, so we
             // can return without blocking the grab loop; the annotated result arrives
             // later via OnInferredFrame and is pasted in by Compose() below.
-            infer.Submit(cw, ch, cropped);
+            // The crop origin lets the overlay also print the wire tip in full-frame pixels.
+            infer.Submit(cw, ch, cropped, ReferenceEquals(cropped, bgra) ? null : (cx, cy));
             bgra = Compose(width, height, bgra);
         }
 

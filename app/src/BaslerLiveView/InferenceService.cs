@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -28,6 +29,7 @@ public sealed class InferenceService : IDisposable
 {
     private readonly Yolo _yolo;
     private readonly SegmentationDrawingOptions _drawing;
+    private readonly DetectionDrawingOptions _obbDrawing;
     private readonly Thread _worker;
     private readonly AutoResetEvent _frameSignal = new(false);
     private readonly object _lock = new();
@@ -40,6 +42,7 @@ public sealed class InferenceService : IDisposable
     private byte[] _pending = Array.Empty<byte>();
     private int _pendingWidth;
     private int _pendingHeight;
+    private (int X, int Y)? _pendingOrigin;
     private bool _hasPending;
     private volatile bool _running = true;
 
@@ -91,21 +94,24 @@ public sealed class InferenceService : IDisposable
                 "expected a segmentation or OBB model.");
         }
 
+        // Same look as training/render.py: no axis-aligned box, a light mask (64/255 ≈ 25%)
+        // with its outline, and class · score · wire tip written top-left by Annotate().
+        // An OBB model's rotated box is the prediction itself, so that one is drawn.
         _drawing = new SegmentationDrawingOptions
         {
-            DrawBoundingBoxes = true,
-            DrawLabels = true,
-            DrawConfidenceScore = true,
-            DrawLabelBackground = true,
-            EnableFontShadow = true,
-            Font = SKTypeface.Default,
-            FontSize = 18,
-            FontColor = SKColors.White,
+            DrawBoundingBoxes = false,
+            DrawLabels = false,
+            DrawConfidenceScore = false,
             BorderThickness = 2,
             BoundingBoxOpacity = 128,
             EnableDynamicScaling = true,
             DrawSegmentationPixelMask = true,
+            PixelMaskOpacity = 64,
+            DrawContour = true,
+            ContourThickness = 2,
         };
+        _obbDrawing = (DetectionDrawingOptions)_drawing;
+        _obbDrawing.DrawBoundingBoxes = true;
 
         _worker = new Thread(WorkerLoop)
         {
@@ -129,8 +135,10 @@ public sealed class InferenceService : IDisposable
     /// Hand the newest frame to the inference worker. Copies the pixels out of the
     /// (reused) camera buffer immediately, so the caller may return at once. If a
     /// previous frame is still being processed it is simply overwritten.
+    /// <paramref name="origin"/> is where this crop sits in the full sensor frame (null =
+    /// not cropped); it is only used to also print the wire tip in full-frame pixels.
     /// </summary>
-    public void Submit(int width, int height, byte[] bgra)
+    public void Submit(int width, int height, byte[] bgra, (int X, int Y)? origin = null)
     {
         int needed = width * height * 4;
         lock (_lock)
@@ -141,6 +149,7 @@ public sealed class InferenceService : IDisposable
             Buffer.BlockCopy(bgra, 0, _pending, 0, needed);
             _pendingWidth = width;
             _pendingHeight = height;
+            _pendingOrigin = origin;
             _hasPending = true;
         }
         _frameSignal.Set();
@@ -154,6 +163,7 @@ public sealed class InferenceService : IDisposable
             if (!_running) return;
 
             int width, height;
+            (int X, int Y)? origin;
             SKBitmap bitmap;
             lock (_lock)
             {
@@ -161,6 +171,7 @@ public sealed class InferenceService : IDisposable
                 _hasPending = false;
                 width = _pendingWidth;
                 height = _pendingHeight;
+                origin = _pendingOrigin;
                 if (_bitmap == null || _bitmap.Width != width || _bitmap.Height != height)
                 {
                     // Camera frames are BGRA8 packed, which maps directly onto Skia's
@@ -174,7 +185,7 @@ public sealed class InferenceService : IDisposable
 
             try
             {
-                byte[] annotated = RunInference(bitmap);
+                byte[] annotated = RunInference(bitmap, origin);
                 FrameProcessed?.Invoke(width, height, annotated);
             }
             catch (Exception ex)
@@ -184,21 +195,27 @@ public sealed class InferenceService : IDisposable
         }
     }
 
-    private byte[] RunInference(SKBitmap bitmap)
+    private byte[] RunInference(SKBitmap bitmap, (int X, int Y)? origin)
     {
-        // Draw() mutates the SKBitmap in place, overlaying masks / rotated boxes + labels.
+        // Draw() mutates the SKBitmap in place, overlaying masks / rotated boxes.
+        var found = new List<(LabelModel Label, double Confidence, SKPoint? Tip)>();
         if (ModelTask == ModelType.ObbDetection)
         {
             var results = _yolo.RunObbDetection(bitmap, confidence: 0.24, iou: 0.7)
-                .OrderByDescending(r => r.Confidence).Take(MaxDetections);
-            bitmap.Draw(results, (DetectionDrawingOptions)_drawing);
+                .OrderByDescending(r => r.Confidence).Take(MaxDetections).ToList();
+            bitmap.Draw(results, _obbDrawing);
+            found.AddRange(results.Select(r => (r.Label, r.Confidence,
+                (SKPoint?)WireTip.FromObb(r.BoundingBox, r.OrientationAngle))));
         }
         else
         {
             var results = _yolo.RunSegmentation(bitmap, confidence: 0.24, pixelConfedence: 0.5, iou: 0.7)
-                .OrderByDescending(r => r.Confidence).Take(MaxDetections);
+                .OrderByDescending(r => r.Confidence).Take(MaxDetections).ToList();
             bitmap.Draw(results, _drawing);
+            found.AddRange(results.Select(r => (r.Label, r.Confidence,
+                WireTip.FromMask(r.BitPackedPixelMask, r.BoundingBox))));
         }
+        Annotate(bitmap, found, origin);
 
         // Read the annotated pixels back out (still Bgra8888) into the output buffer the
         // receiver is not holding (see FrameProcessed).
@@ -209,6 +226,62 @@ public sealed class InferenceService : IDisposable
         Marshal.Copy(bitmap.GetPixels(), annotated, 0, size);
         _nextOutput ^= 1;
         return annotated;
+    }
+
+    /// <summary>
+    /// Wire tip as a dot, and per detection top-left:
+    /// "■ wire 0.75" / "crop (498.0, 334.8)" / "full (1082.0, 718.8)" on separate lines —
+    /// crop in crop pixels (only when cropped), full in sensor pixels. Same layout as
+    /// training/infer.py.
+    /// </summary>
+    private void Annotate(SKBitmap bitmap, List<(LabelModel Label, double Confidence, SKPoint? Tip)> found,
+        (int X, int Y)? origin)
+    {
+        using var canvas = new SKCanvas(bitmap);
+        float scale = Math.Max(1f, bitmap.Width / 640f);
+        using var font = new SKFont(SKTypeface.Default, 14 * scale);
+        using var paint = new SKPaint { IsAntialias = true };
+        float radius = Math.Max(3, bitmap.Width / 200);
+        var palette = _drawing.BoundingBoxHexColors;
+
+        var lines = new List<(string Text, SKColor? Color)>();
+        foreach (var (label, confidence, tip) in found)
+        {
+            SKColor color = SKColor.Parse(palette[label.Index % palette.Length]);
+            lines.Add((FormattableString.Invariant($"{label.Name} {confidence:0.00}"), color));
+            if (tip is SKPoint p)
+            {
+                paint.Color = SKColors.White;
+                canvas.DrawCircle(p, radius + 2, paint);
+                paint.Color = color;
+                canvas.DrawCircle(p, radius, paint);
+                var (ox, oy) = origin ?? (0, 0);
+                if (origin is not null)
+                    lines.Add((FormattableString.Invariant($"crop ({p.X:0.0}, {p.Y:0.0})"), null));
+                lines.Add((FormattableString.Invariant($"full ({p.X + ox:0.0}, {p.Y + oy:0.0})"), null));
+            }
+        }
+        if (lines.Count == 0)
+            lines.Add(("no detection", null));
+
+        font.GetFontMetrics(out var metrics);
+        float lineHeight = font.Size + 6 * scale, swatch = font.Size * 0.8f, pad = 4 * scale;
+        float y = pad;
+        foreach (var (text, color) in lines)
+        {
+            float x = color is null ? pad : pad + swatch + pad;
+            paint.Color = SKColors.Black;
+            canvas.DrawRect(0, y, x + font.MeasureText(text) + pad, lineHeight, paint);
+            float baseline = y + (lineHeight - metrics.Descent - metrics.Ascent) / 2;
+            if (color is SKColor c)
+            {
+                paint.Color = c;
+                canvas.DrawRect(pad, baseline - swatch, swatch, swatch, paint);
+            }
+            paint.Color = color is null ? new SKColor(180, 180, 180) : SKColors.White;
+            canvas.DrawText(text, x, baseline, font, paint);
+            y += lineHeight;
+        }
     }
 
     public void Dispose()

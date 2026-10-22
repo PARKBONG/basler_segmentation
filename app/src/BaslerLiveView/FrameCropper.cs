@@ -72,12 +72,14 @@ public sealed class FrameCropper
     }
 
     /// <summary>
-    /// Crop <paramref name="src"/> and report the resulting size. Returns the
-    /// source buffer unchanged when cropping is off or would be a no-op.
+    /// Crop <paramref name="src"/> and report the resulting size and where it sits in the
+    /// source (top-left). Returns the source buffer unchanged (offset 0, 0) when cropping
+    /// is off or would be a no-op.
     /// </summary>
-    public byte[] Crop(int srcWidth, int srcHeight, byte[] src, out int width, out int height)
+    public byte[] Crop(int srcWidth, int srcHeight, byte[] src, out int width, out int height,
+        out int offsetX, out int offsetY)
     {
-        if (!TryGetWindow(srcWidth, srcHeight, out int offsetX, out int offsetY, out width, out height))
+        if (!TryGetWindow(srcWidth, srcHeight, out offsetX, out offsetY, out width, out height))
             return src;
 
         int dstStride = width * 4;             // BGRA = 4 bytes/pixel
