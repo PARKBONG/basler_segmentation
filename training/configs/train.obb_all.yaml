@@ -5,16 +5,15 @@
 # 사각형 — 실제 와이어 끝까지만 덮는다. val 은 train 과 겹치므로 지표는 낙관적이고 early
 # stopping 이 과적합을 못 잡음 → epochs 를 train.single(seg, 진짜 val)의 best epoch 로 고정.
 # (같은 데이터·증강이라 대용으로 씀. OBB 전용 측정 실행은 없음.)
-# 앱은 모델 파일에서 seg/obb 를 알아서 고른다 — 쓰려면 config.xml <Model> 을 이 파일로.
+# 앱은 모델 파일에서 seg/obb 를 알아서 고른다 — 쓰려면 config.xml <Model> 을 yolo26s-obb.onnx 로.
+# 앱 배포: archive.py 로 weights/ 에 보관 → weights/deploy.yaml 의 yolo26s-obb.onnx 줄에서 고름.
 base: base/train.yaml
 
 train:
   model: yolo26s-obb.pt
   data: ../datasets/processed_obb/kimm/data.all.yaml
-  epochs: 500                # ← train.single 의 best epoch 로 바꿀 것 (끝나면 채움)
+  epochs: 15                # ← train.single 의 best epoch 로 바꿀 것 (끝나면 채움)
   patience: 0                # 0 = EarlyStopping 끔 (val 이 train 과 겹쳐 의미 없음)
   project: runs/obb
   name: yolo26s-obb-all      # runs/obb/yolo26s-obb-all/<YYMMDD_HHMMSS>/
 
-export:
-  deploy_to: ../app/src/BaslerLiveView/Models/yolo26s-obb.onnx

@@ -37,25 +37,44 @@
   </ItemGroup>
 
   <!--
-    ONNX models (segmentation or OBB). Not committed to this repo (large binary) and
-    not bundled by the YoloDotNet submodule: training's export (deploy_to) writes them
-    into src\BaslerLiveView\Models\, or drop yolo26s-seg.onnx there yourself.
-    Any *.onnx under Models\ is copied next to the executable on build — except
-    Models\history\ (timestamped earlier deployments, kept only for rollback).
+    ONNX models (segmentation or OBB) come from the repo-root weights\ folder: archived
+    training runs, tracked with Git LFS. weights\deploy.yaml picks one run per app model
+    name, one "name: <name>/<stamp>" per line, e.g.
+
+        yolo26s-seg.onnx: yolo26s-seg-all/261022_151611
+
+    and this target copies weights\<run>\weights\best.onnx to $(OutDir)Models\<name>,
+    where the app looks up config.xml <Inference><Model>. Deploying = edit that file,
+    commit, rebuild. A fresh clone needs `git lfs pull` first (otherwise best.onnx is a
+    small LFS pointer and the model fails to load).
   -->
+  <PropertyGroup>
+    <WeightsDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\..\weights'))\</WeightsDir>
+    <DeployList>$(WeightsDir)deploy.yaml</DeployList>
+  </PropertyGroup>
+
   <ItemGroup>
-    <None Include="Models\**\*.onnx" Exclude="Models\history\**">
-      <Link>Models\%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <!-- Rebuild (VS fast up-to-date check) when the deployment choice changes. -->
+    <UpToDateCheckInput Include="$(DeployList)" />
   </ItemGroup>
 
-  <Target Name="CheckSegModel" AfterTargets="Build">
-    <PropertyGroup>
-      <SegModelDest>$(OutDir)Models\yolo26s-seg.onnx</SegModelDest>
-    </PropertyGroup>
-    <Warning Text="Default model missing: place yolo26s-seg.onnx in src\BaslerLiveView\Models\ (training's train.seg_all.yaml export deploys it there) — it is not bundled by the YoloDotNet submodule."
-             Condition="!Exists('$(SegModelDest)')" />
+  <Target Name="DeployModels" AfterTargets="Build">
+    <Error Condition="!Exists('$(DeployList)')" Text="Model list missing: $(DeployList)" />
+    <ReadLinesFromFile File="$(DeployList)">
+      <Output TaskParameter="Lines" ItemName="_DeployLine" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <_DeployLine Remove="@(_DeployLine)" Condition="$([System.String]::Copy('%(Identity)').TrimStart().StartsWith('#'))" />
+      <_DeployEntry Include="@(_DeployLine)">
+        <ModelName>$([System.String]::Copy('%(Identity)').Split(':')[0].Trim())</ModelName>
+        <Run>$([System.String]::Copy('%(Identity)').Split(':')[1].Split('#')[0].Trim())</Run>
+      </_DeployEntry>
+      <_DeployModel Include="@(_DeployEntry->'$(WeightsDir)%(Run)\weights\best.onnx')" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_DeployModel.Identity)')"
+           Text="weights\deploy.yaml: %(_DeployModel.ModelName) → %(_DeployModel.Identity) not found (archive the run with training/archive.py, or `git lfs pull`)." />
+    <Copy SourceFiles="@(_DeployModel)" DestinationFiles="@(_DeployModel->'$(OutDir)Models\%(ModelName)')" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Model %(_DeployModel.ModelName) ← %(_DeployModel.Identity)" />
   </Target>
 
   <!--

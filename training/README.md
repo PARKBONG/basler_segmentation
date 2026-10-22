@@ -3,8 +3,8 @@
 와이어 seg / obb 모델(yolo26s) 학습 파이프라인 — 라벨링부터 앱 배포까지. uv 프로젝트 하나.
 
 ```
-labeller/  →  preprocess.py  →  train.py (single)  →  eval.py  →  train.py (seg_all · obb_all)  →  app Models/
- 라벨링        processed_seg/    측정 · best epoch     test 1회     전체 데이터로 재학습              ONNX 배포
+labeller/  →  preprocess.py  →  train.py (single)  →  eval.py  →  train.py (seg_all · obb_all)  →  archive.py  →  weights/deploy.yaml
+ 라벨링        processed_seg/    측정 · best epoch     test 1회     전체 데이터로 재학습              ../weights/    앱 빌드가 고른 모델을 복사
                processed_obb/
 ```
 
@@ -95,11 +95,11 @@ datasets/
 
 ## 학습 (`train.py`, `configs/train.*.yaml`)
 
-| config | 모델 | 데이터 | 종료 | 배포 |
+| config | 모델 | 데이터 | 종료 | 앱 |
 |---|---|---|---|---|
-| `train.single.yaml` | seg | train 세션 / val·test 분리 | early stop (patience 50) | 안 함 — 측정용 |
-| `train.seg_all.yaml` | seg | 전체 (`data.all.yaml`) | epochs = single 의 best epoch | `Models/yolo26s-seg.onnx` |
-| `train.obb_all.yaml` | obb | 전체 (`processed_obb`) | epochs = single 의 best epoch | `Models/yolo26s-obb.onnx` |
+| `train.single.yaml` | seg | train 세션 / val·test 분리 | early stop (patience 50) | 측정용 |
+| `train.seg_all.yaml` | seg | 전체 (`data.all.yaml`) | epochs = single 의 best epoch | `yolo26s-seg.onnx` 후보 |
+| `train.obb_all.yaml` | obb | 전체 (`processed_obb`) | epochs = single 의 best epoch | `yolo26s-obb.onnx` 후보 |
 
 - **순서**: `single` 로 성능을 재고(진짜 val 로 early stop), 그 best epoch 를 `*_all` 의 `epochs` 에 넣어
   데이터를 다 넣고 다시 학습한다. `*_all` 은 val 이 train 과 겹쳐 early stop 이 과적합을 못 잡기 때문.
@@ -111,8 +111,10 @@ datasets/
   `<실행 폴더>/overlays/epoch_NNN.jpg` (원본 4장 + 증강 12장, 증강 값 표시, 초록 = 정답, 파랑 = 추론 마스크(옅게)). 끝나면 `best.jpg`.
 - **증강 미리보기**: `stages: {preview_aug: true, train: false, export: false}` → `runs/preview/aug/`.
 - **export 만**: `stages: {preview_aug: false, train: false, export: true}` — 최신 실행의 best.pt 를 ONNX 로.
-- **배포**(`export.deploy_to`): 앱 `Models/<이름>.onnx` 를 덮어쓰고(앱 `config.xml` 의 `<Model>` 이 이 이름)
-  `Models/history/<이름>.<시각>.onnx` 로 이력을 남긴다. 앱은 모델 파일을 보고 seg/obb 를 알아서 고른다.
+- **배포**: 학습은 앱을 건드리지 않는다. 쓸 실행을 `uv run archive.py runs/<task>/<name>/<시각>` (또는 task
+  `archive`) 로 저장소 루트 `weights/` 에 보관(Git LFS)하고, `weights/deploy.yaml` 에서
+  `yolo26s-seg.onnx: yolo26s-seg-all/<시각>` 처럼 고른 뒤 커밋 → 앱 빌드가 그 `best.onnx` 를 실행 파일 옆
+  `Models/` 로 복사한다. 이력은 deploy.yaml 의 git 이력. 앱은 모델 파일을 보고 seg/obb 를 알아서 고른다.
 - 결과는 `runs/<task>/<name>/<YYMMDD_HHMMSS>/` — 실행마다 쌓인다. config 에서 타임스탬프를 뺀
   `runs/<task>/<name>/weights/best.pt` 는 그 name 의 최신 실행으로 해석된다.
   `weights/` 에는 best.pt · last.pt 외에 50 epoch 마다 `epoch0.pt` · `epoch50.pt` … 도 남는다

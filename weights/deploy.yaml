@@ -1,0 +1,9 @@
+# 앱이 쓸 모델 — 여기서 보관본을 고르고 커밋하면 배포.
+#
+#   <앱 모델 파일 이름>: <weights/ 안의 보관본 = <name>/<시각>>
+#
+# 앱 빌드(BaslerLiveView.csproj)가 weights/<보관본>/weights/best.onnx 를 실행 파일 옆
+# Models/<앱 모델 파일 이름> 으로 복사하고, 앱은 config.xml <Inference><Model> 의 이름을 읽는다.
+# 빌드가 줄 단위로 읽으므로 'key: value' 한 줄씩만 (# 주석 가능). 보관은 training/archive.py.
+yolo26s-seg.onnx: yolo26s-seg-all/261022_151611
+# yolo26s-obb.onnx: yolo26s-obb-all/261022_153600     ← obb 를 보관한 뒤 주석 해제

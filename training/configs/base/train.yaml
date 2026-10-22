@@ -62,10 +62,8 @@ export:
   simplify: true
   half: false                # FP16 export. 런타임이 지원할 때만 true
   dynamic: false
-  # deploy_to: 앱 Models/ 의 파일 — 각 config 에서. 비우면 앱으로 복사하지 않음.
-  #   <이름>.onnx 를 새 모델로 덮어쓰고(앱 config.xml <Model> 이 이 이름), 이력으로
-  #   history/<이름>.<YYYYMMDD_HHMMSS>.onnx 사본도 남긴다 (앱 빌드는 history/ 를 복사 안 함).
-  #   처음 덮어쓸 때 원래 파일은 history/<이름>.orig.onnx.
+  # 앱 배포는 여기서 하지 않는다 — export 는 runs/ 의 실행 폴더에 best.onnx 를 만들 뿐.
+  # 앱에 쓰려면 archive.py 로 저장소 루트 weights/ 에 보관하고 weights/deploy.yaml 에서 고른다.
 
 # stages.preview_aug 설정. 실제 학습 결과(runs/)와 섞이지 않게 따로 나갑니다.
 preview:

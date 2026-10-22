@@ -12,7 +12,7 @@ yolo26s-seg / yolo26s-obb 파인튜닝 + ONNX export.
 config 의 stages 로 무엇을 돌릴지 고릅니다 (블록 자체가 필수 — 빠지면 오류):
     preview_aug : 증강이 실제로 어떻게 먹는지 눈으로 확인 (학습 전 점검용)
     train       : 파인튜닝
-    export      : best.pt → ONNX → 앱 Models/ 배치
+    export      : best.pt → ONNX (runs/ 실행 폴더에. 앱 배포는 archive.py → weights/deploy.yaml)
 재학습 없이 export 만 다시 하려면 train: false, export: true 로 두면 됩니다.
 
 사용법 (training/ 에서, uv sync --extra train --extra export 후):
@@ -23,8 +23,6 @@ config 의 stages 로 무엇을 돌릴지 고릅니다 (블록 자체가 필수 
 from __future__ import annotations
 
 import argparse
-import shutil
-from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -347,11 +345,15 @@ class Trainer(Stage):
         return best
 
     def export(self) -> Path:
-        """best.pt → ONNX. deploy_to 가 있으면 앱 Models/ 로도 복사한다."""
+        """
+        best.pt → ONNX (실행 폴더의 weights/best.onnx). 앱으로는 복사하지 않는다 — 앱 배포는
+        archive.py 로 저장소 루트 weights/ 에 보관한 뒤 weights/deploy.yaml 에서 고른다.
+        """
         from ultralytics import YOLO
 
         ex = dict(self.cfg.get("export", {}))
-        deploy_to = (ex.pop("deploy_to", "") or "").strip()
+        if ex.pop("deploy_to", None):
+            self.log("export.deploy_to 는 더 이상 쓰지 않음 (무시) — archive.py → weights/deploy.yaml")
 
         weights = self.best_weights()
         if not weights.exists():
@@ -382,26 +384,8 @@ class Trainer(Stage):
         commit = ((info.get("git") or {}).get("commit") or "unknown")[:7]
         self.log(f"출처 기록: {info.get('run')} @ {commit}")
 
-        if deploy_to:
-            # 앱은 고정 이름(deploy_to)을 읽는다 (config.xml <Model>) — 그 이름을 새 모델로
-            # 덮어쓰고, 되돌릴 수 있게 타임스탬프 사본을 history/ 에 남긴다 (앱 빌드가
-            # history/ 는 복사하지 않음). 처음 덮어쓰는 원래 파일(배포 이력이 없는 것)은
-            # history/<이름>.orig 로 한 번 백업.
-            current = self.resolve(deploy_to)
-            hist_dir = current.parent / "history"
-            hist_dir.mkdir(parents=True, exist_ok=True)
-            history = list(hist_dir.glob(f"{current.stem}.2*{current.suffix}"))
-            if current.exists() and not history:
-                orig = hist_dir / f"{current.stem}.orig{current.suffix}"
-                shutil.copyfile(current, orig)
-                self.log(f"원래 모델 백업: {orig}")
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            dest = hist_dir / f"{current.stem}.{stamp}{current.suffix}"
-            shutil.copyfile(exported, dest)      # 이력 (runs/ 의 원본도 그대로 유지)
-            shutil.copyfile(exported, current)   # 앱이 읽는 현재 모델
-            self.log(f"앱에 배치 완료: {current}  (이력 {dest.name})")
-        else:
-            self.log("export.deploy_to 비어있음 → 복사 생략")
+        self.log(f"앱에 쓰려면: uv run archive.py {weights.parent.parent} → "
+                 f"../weights/deploy.yaml 에서 고르기")
 
         return exported
 

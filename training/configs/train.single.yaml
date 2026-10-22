@@ -14,4 +14,4 @@ train:
   project: runs/segment      # 결과 저장 루트 (training/ 기준)
   name: yolo26s-seg-finetune # 실제 저장 위치: runs/segment/<name>/<YYMMDD_HHMMSS>/
 
-# export: 측정용이라 앱으로 복사하지 않음 (deploy_to 없음 — 배포는 train.seg_all.yaml).
+# 측정용 — 앱에는 train.seg_all 결과를 보관(archive.py)해서 weights/deploy.yaml 로 고른다.

@@ -9,11 +9,9 @@ base: base/train.yaml
 train:
   model: yolo26s-seg.pt
   data: ../datasets/processed_seg/kimm/data.all.yaml   # preprocess.py 가 쓰는 전체 데이터 버전
-  epochs: 500                # ← train.single 의 best epoch 로 바꿀 것 (끝나면 채움)
+  epochs: 15                # ← train.single 의 best epoch 로 바꿀 것 (끝나면 채움)
   patience: 0                # 0 = EarlyStopping 끔 (val 이 train 과 겹쳐 의미 없음)
   project: runs/segment
   name: yolo26s-seg-all      # runs/segment/yolo26s-seg-all/<YYMMDD_HHMMSS>/
 
-export:
-  # 앱이 이 이름으로 읽음 (config.xml <Model>) — 덮어쓰고 이력 사본을 남김 (base/train.yaml 참고)
-  deploy_to: ../app/src/BaslerLiveView/Models/yolo26s-seg.onnx
+# 앱 배포: archive.py 로 weights/ 에 보관 → weights/deploy.yaml 의 yolo26s-seg.onnx 줄에서 고름.

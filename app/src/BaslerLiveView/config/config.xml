@@ -12,12 +12,11 @@
     <FrameRate>80</FrameRate>
   </Camera>
   <Inference>
-    <!-- 사용할 ONNX 모델 파일 이름. 실행 파일 옆 Models\ 폴더에서 찾습니다
-         (src\BaslerLiveView\Models\ 에 두면 빌드 때 복사됨).
+    <!-- 사용할 ONNX 모델 파일 이름. 실행 파일 옆 Models\ 폴더에서 찾습니다 — 빌드가
+         저장소 루트 weights\deploy.yaml 에서 이 이름에 고른 보관본을 거기로 복사합니다.
          YoloDotNet 이 모델의 버전과 종류를 파일에서 알아내므로, 세그멘테이션 모델
          (yolo26s-seg.onnx)이면 마스크, OBB 모델(yolo26s-obb.onnx)이면 회전 박스를 그립니다.
-         training 의 train.seg_all.yaml / train.obb_all.yaml export 가 이 이름 그대로
-         Models\ 에 덮어써 배포합니다(이력은 Models\history\ 에 남음). -->
+         새 모델 배포 = training/archive.py 로 weights\ 에 보관 → deploy.yaml 에서 고르고 빌드. -->
     <Model>yolo26s-seg.onnx</Model>
   </Inference>
   <Crop>

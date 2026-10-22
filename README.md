@@ -9,7 +9,8 @@ basler_segmentation/
 └─ app/        실증 C# (.NET 8 WPF)      라이브 뷰 · 녹화 · 학습한 모델로 실시간 추론
 ```
 
-흐름: `app` 으로 녹화 → `training/labeller` 로 라벨 → `training` 으로 전처리·학습 → ONNX 를 `app` 에 넣어 실증.
+흐름: `app` 으로 녹화 → `training/labeller` 로 라벨 → `training` 으로 전처리·학습 → 쓸 모델을 `weights/` 에
+보관하고 `weights/deploy.yaml` 에서 고름 → `app` 빌드가 그 ONNX 를 넣어 실증.
 
 ## datasets/
 
@@ -47,7 +48,8 @@ dotnet build app/basler_segmentation.sln
 `app/external/` 에 Basler pylon SDK(필요한 부분만 벤더링)와 YoloDotNet(submodule)이 있다.
 설정은 [app/src/BaslerLiveView/config/config.xml](app/src/BaslerLiveView/config/config.xml) —
 녹화 폴더·기준 이미지 같은 상대경로는 저장소 루트(`.git` 이 있는 폴더) 기준.
-추론 모델은 `<Inference><Model>` — seg / obb 모델을 파일에서 알아서 구분한다.
+추론 모델은 `<Inference><Model>` — seg / obb 모델을 파일에서 알아서 구분한다. 그 파일은 빌드가
+[weights/deploy.yaml](weights/deploy.yaml) 에서 고른 보관본을 복사한 것 (clone 뒤 `git lfs pull` 필요).
 자세한 건 [app/src/BaslerLiveView/README.md](app/src/BaslerLiveView/README.md).
 
 ## 저장소 규칙
