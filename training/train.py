@@ -198,23 +198,14 @@ class Trainer(Stage):
             mod.plot_images = wrapped
 
     @staticmethod
-    def apply_blur(cfg: dict) -> None:
+    def apply_photometric(cfg: dict) -> None:
         """
-        config 의 `blur: {p, sigma: [lo, hi]}` → Ultralytics `augmentations`
-        (albumentations GaussianBlur, 학습 해상도 imgsz 기준 sigma px).
-
-        Ultralytics 에는 블러 설정 키가 없고, 기본 Albumentations 의 Blur 는 p=0.01 이라
-        사실상 꺼져 있다 — 초점이 살짝 나간 프레임에 대응하려고 따로 둔다. 이 목록이
-        기본 변환(Blur/MedianBlur/ToGray/CLAHE, 각 1%)을 대체한다.
+        config 의 `blur` · `brightness` → Ultralytics `augmentations` (augment.py).
+        Ultralytics 에는 블러 키가 없고(기본 Blur 는 p=0.01), hsv_v 는 최대 0~2배라 따로 둔다.
         """
-        blur = cfg.pop("blur", None)
-        if not blur:
-            return
-        import albumentations as A
+        import augment
 
-        lo, hi = blur.get("sigma", [0.3, 1.5])
-        cfg["augmentations"] = [A.GaussianBlur(blur_limit=0, sigma_limit=(float(lo), float(hi)),
-                                               p=float(blur.get("p", 0.3)))]
+        augment.albumentations_list(cfg)
 
     def preview_aug(self) -> Path:
         """
@@ -241,7 +232,7 @@ class Trainer(Stage):
             save=False,
             resume=False,
         )
-        self.apply_blur(cfg)
+        self.apply_photometric(cfg)
         self.shorten_plot_names()
 
         from ultralytics import YOLO
@@ -274,7 +265,7 @@ class Trainer(Stage):
         self.log(f"시작 가중치: {weights}")
         self.log(f"데이터셋: {cfg['data']}")
         self.log(f"결과 폴더: {Path(cfg['project']) / cfg['name']}")
-        self.apply_blur(cfg)
+        self.apply_photometric(cfg)
         self.shorten_plot_names()
 
         from ultralytics import YOLO, settings
@@ -291,8 +282,9 @@ class Trainer(Stage):
         if (self.cfg.get("overlay") or {}).get("enabled"):
             # 매 val 마다 원본 4장 + 증강 12장 추론 격자 → <실행 폴더>/overlays/, TensorBoard
             import epoch_overlay
-            model.add_callback("on_fit_epoch_end",
-                               epoch_overlay.callback(blur=self.cfg.get("train", {}).get("blur")))
+            t = self.cfg.get("train", {})
+            model.add_callback("on_fit_epoch_end", epoch_overlay.callback(
+                blur=t.get("blur"), brightness=t.get("brightness")))
         # cfg 의 나머지 키는 모두 Ultralytics train() 인자와 1:1 대응 (증강 포함)
         results = model.train(**cfg)
 

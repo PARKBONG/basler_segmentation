@@ -25,7 +25,7 @@ train:
   # 변화(조금 밀림·휨·아크 밝기·살짝 흐림)만 흔든다. 값을 바꾸면 preview_aug 로 확인.
   hsv_h: 0.0                 # 흑백 카메라라 색상/채도 증강은 의미 없음
   hsv_s: 0.0
-  hsv_v: 0.6                 # 밝기 — 아크 글레어 편차가 큼
+  hsv_v: 0.0                 # 밝기는 아래 brightness 로 — hsv_v 는 1±v 라 최대 0~2배까지만 됨
   degrees: 10.0              # 회전(도) — 라벨 7,667장의 와이어 축은 중앙값(69°)에서 p90 5° · p99 7°
                              # 안쪽. 그보다 조금 넓게.
   translate: 0.1             # 이동 ±비율 — 앱 크롭 위치(40%)와 학습 크롭(50%) 차이(약 9%·6%)도 덮음
@@ -40,9 +40,13 @@ train:
   close_mosaic: 0            # mosaic 을 안 쓰므로 의미 없음
   mixup: 0.0
   copy_paste: 0.0
-  blur:                      # 초점 살짝 흐림 — train.py 가 albumentations GaussianBlur 로 넘김
-    p: 0.1                   # 적용 확률
-    sigma: [0.3, 1.5]        # 가우시안 sigma 범위 (학습 해상도 640 기준 px)
+  # 아래 둘은 Ultralytics 키가 아니다 — augment.py 가 albumentations 변환으로 바꿔 넘김
+  brightness:                # 밝기 배율 — 아크 글레어 편차가 큼
+    p: 1.0                   # 적용 확률
+    gain: [0.25, 4.0]        # 로그 균등: ±2 stop, 중앙값 1배 (어두운 쪽·밝은 쪽 반반)
+  blur:                      # 초점 흐림 (GaussianBlur)
+    p: 0.2                   # 적용 확률
+    sigma: [1.0, 3.0]        # 가우시안 sigma 범위 (학습 해상도 640 기준 px)
 
 # 매 val 마다 원본 4장 + 증강 12장(값 표시) 추론 격자 → <실행 폴더>/overlays/epoch_NNN.jpg
 # 와 TensorBoard Images 탭. 증강 범위는 위 train 블록 값을 그대로 씀 (epoch_overlay.py).

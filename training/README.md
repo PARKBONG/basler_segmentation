@@ -18,6 +18,7 @@ labeller/  →  preprocess.py  →  train.py (single)  →  eval.py  →  train.
 | `eval.py` | checkpoint 를 지정 split 에서 평가 + 정답/추론 겹친 그림 |
 | `infer.py` | 사진 한 장 → 예측 그림, 세션 폴더 → 동영상 |
 | `epoch_overlay.py` | 학습 중 매 val 마다 원본 4장 + 증강 12장 추론 격자 |
+| `augment.py` | Ultralytics 키로 못 내는 증강 — 밝기 배율 · 블러 |
 | `common.py` | config 로드(+ `base:` 상속) · 경로 해석 · 로그 |
 | `tools/make_reference_cutout.py` | 기구부 기준 이미지 → 누끼·윤곽선 (앱·라벨러 오버레이) |
 | `configs/` | `preprocess.yaml`, `train.*.yaml` (+ 공통 `base/train.yaml`), `eval.*.yaml` |
@@ -103,7 +104,7 @@ datasets/
   데이터를 다 넣고 다시 학습한다. `*_all` 은 val 이 train 과 겹쳐 early stop 이 과적합을 못 잡기 때문.
 - **공통 설정**은 `configs/base/train.yaml` — 각 config 는 `base: base/train.yaml` 로 상속하고 다른 값만
   적는다 (dict 는 키별로 덮어씀). 증강을 바꾸면 세 학습에 같이 반영된다.
-- **증강**: 회전 10°(실제 각도 p99 7°) · 이동 0.1 · 확대 0.2 · 기울이기 2° · 원근 0.0002 · 밝기 0.6 · 블러 10%(albumentations). mosaic 은 끔. 좌우/상하
+- **증강**: 회전 10°(실제 각도 p99 7°) · 이동 0.1 · 확대 0.2 · 기울이기 2° · 원근 0.0002 · 밝기 0.25~4배(로그 균등) · 블러 20% sigma 1~3(둘 다 `augment.py` 의 albumentations). mosaic 은 끔. 좌우/상하
   반전은 끔 (실제로 없는 장면). offline 증강은 하지 않는다 — Ultralytics 가 매 epoch 새로 증강.
 - **보기**: TensorBoard(`uv run tensorboard --logdir runs` 또는 task) 와, 매 val 마다
   `<실행 폴더>/overlays/epoch_NNN.jpg` (원본 4장 + 증강 12장, 증강 값 표시, 초록 = 정답, 파랑 = 추론 마스크(옅게)). 끝나면 `best.jpg`.

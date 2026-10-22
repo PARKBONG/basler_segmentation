@@ -8,16 +8,17 @@
   초록 선 = 정답 폴리곤 (증강 칸은 같은 변환을 적용해 옮긴 것), 그 위가 모델 추론(마스크·박스)
 
 증강은 학습 config 와 같은 범위(degrees · translate · scale · shear · perspective · hsv_v ·
-blur)에서 여기서 직접
+brightness · blur)에서 여기서 직접
 뽑는다 — Ultralytics 의 학습 증강은 뽑힌 값을 밖으로 내주지 않아 화면에 적을 수 없기 때문.
 입력 16장은 첫 epoch 에 한 번 만들고 고정 → epoch 이 지나며 같은 입력에서 추론이 어떻게
-변하는지 본다. 블러는 학습에서 p(기본 10%)로만 들어가 무작위로는 거의 안 보이므로, 각 행의
+변하는지 본다. 블러는 학습에서 p(기본 20%)로만 들어가 무작위로는 거의 안 보이므로, 각 행의
 마지막 증강 칸에는 항상 넣는다.
 
 현재 가중치는 Ultralytics 가 epoch 마다 저장하는 last.pt(EMA)를 다시 읽어 예측 파이프라인을
 그대로 탄다 — 전처리·후처리를 따로 재현하다 어긋나지 않게.
 
-    model.add_callback("on_fit_epoch_end", epoch_overlay.callback(blur={"p": 0.1, "sigma": [0.3, 1.5]}))
+    model.add_callback("on_fit_epoch_end", epoch_overlay.callback(blur={"p": 0.2, "sigma": [1.0, 3.0]},
+                                                           brightness={"gain": [0.25, 4.0]}))
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from augment import log_uniform
 from common import IMG_EXTS
 
 ROWS, AUGS = 4, 3   # 원본 4장 × (원본 + 증강 3) = 4×4
@@ -92,6 +94,9 @@ def _augment(img: np.ndarray, polys: list, hyp: dict, rng: random.Random,
     polys = [cv2.perspectiveTransform(p[None], m)[0] for p in polys]
 
     gain = rng.uniform(1 - hyp["hsv_v"], 1 + hyp["hsv_v"])
+    bright = hyp.get("brightness") or {}
+    if bright and rng.random() < float(bright.get("p", 1.0)):
+        gain *= log_uniform(rng, *map(float, bright.get("gain", [0.25, 4.0])))
     out = np.clip(out.astype(np.float32) * gain, 0, 255).astype(np.uint8)
     text = f"rot {deg:+.1f} s {s:.2f} t {tx:+.2f},{ty:+.2f} v x{gain:.2f}"
     if hyp["shear"] or hyp["perspective"]:
@@ -99,7 +104,7 @@ def _augment(img: np.ndarray, polys: list, hyp: dict, rng: random.Random,
 
     blur = hyp.get("blur") or {}
     if blur and (force_blur or rng.random() < float(blur.get("p", 0))):
-        lo, hi = blur.get("sigma", [0.3, 1.5])
+        lo, hi = blur.get("sigma", [1.0, 3.0])
         # sigma 는 학습 해상도(imgsz) 기준 px — 입력이 더 크면 그만큼 키워야 같은 흐림
         sigma = rng.uniform(float(lo), float(hi))
         out = cv2.GaussianBlur(out, (0, 0), sigma * w / hyp["imgsz"])
@@ -133,8 +138,8 @@ def _tile(plot: np.ndarray, polys: list, text: str) -> np.ndarray:
     return t
 
 
-def callback(blur: dict | None = None, seed: int = 0):
-    """Ultralytics on_fit_epoch_end 콜백. blur = 학습 config 의 blur 블록 (없으면 블러 안 함)."""
+def callback(blur: dict | None = None, brightness: dict | None = None, seed: int = 0):
+    """Ultralytics on_fit_epoch_end 콜백. blur · brightness = 학습 config 의 그 블록 (없으면 안 함)."""
     state: dict = {}
 
     def build(trainer) -> None:
@@ -142,7 +147,7 @@ def callback(blur: dict | None = None, seed: int = 0):
         hyp = {"degrees": float(a.degrees), "translate": float(a.translate),
                "scale": float(a.scale), "shear": float(a.shear),
                "perspective": float(a.perspective), "hsv_v": float(a.hsv_v),
-               "imgsz": int(a.imgsz), "blur": blur}
+               "imgsz": int(a.imgsz), "blur": blur, "brightness": brightness}
         rng = random.Random(seed)
         inputs = []                       # (이미지 BGR, 정답 폴리곤, 칸 위 문자열)
         for p in _val_images(trainer.data, ROWS):
