@@ -258,6 +258,39 @@ class Trainer(Stage):
         cfg["name"] = run_stamp()
         return cfg
 
+    @staticmethod
+    def tensorboard_layout(trainer) -> None:
+        """
+        TensorBoard CUSTOM SCALARS 탭 — Ultralytics 는 train/x 와 val/x 를 따로 그려서 과적합을
+        보려면 겹친 그래프가 필요하다. 태그는 정규식 (Ultralytics 가 남기는 이름 그대로).
+        """
+        import re
+
+        from ultralytics.utils.callbacks import tensorboard as tb
+
+        writer = getattr(tb, "WRITER", None)
+        if writer is None:
+            return
+
+        def m(name: str) -> str:
+            return rf"^metrics/{re.escape(name)}$"
+
+        def both(loss: str) -> list:
+            return ["Multiline", [rf"^train/{loss}$", rf"^val/{loss}$"]]
+
+        writer.add_custom_scalars({
+            "핵심": {
+                "seg_loss — train vs val": both("seg_loss"),
+                "mAP50-95 — Mask vs Box (best.pt·early stop 기준은 둘의 합)":
+                    ["Multiline", [m("mAP50-95(M)"), m("mAP50-95(B)")]],
+                "Mask — P · R · mAP50": ["Multiline", [m("precision(M)"), m("recall(M)"), m("mAP50(M)")]],
+            },
+            # l1_loss(YOLO26) / dfl_loss(그 이전) 중 남는 쪽만 그려진다. sem_loss 는 val 에서 항상 0
+            "손실 train vs val": {k: both(k) for k in ("box_loss", "cls_loss", "l1_loss", "dfl_loss",
+                                                     "sem_loss")},
+            "학습률": {"lr (pg 짝수 = 헤드 ×3)": ["Multiline", [r"^lr/pg\d+$"]]},
+        })
+
     def train(self) -> Path:
         """파인튜닝. best.pt 경로를 돌려준다."""
         weights = self.start_weights()      # 설정 검증을 무거운 import 앞에 둔다
@@ -279,6 +312,7 @@ class Trainer(Stage):
             settings.update(want)
 
         model = YOLO(weights)
+        model.add_callback("on_train_start", self.tensorboard_layout)
         if (self.cfg.get("overlay") or {}).get("enabled"):
             # 매 val 마다 원본 4장 + 증강 12장 추론 격자 → <실행 폴더>/overlays/, TensorBoard
             import epoch_overlay
