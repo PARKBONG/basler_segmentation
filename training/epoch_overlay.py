@@ -7,7 +7,8 @@
   열 = [원본, 증강 1, 증강 2, 증강 3]  — 각 칸 위에 그 칸의 증강 값을 적음
   초록 선 = 정답 폴리곤 (증강 칸은 같은 변환을 적용해 옮긴 것), 그 위가 모델 추론(마스크·박스)
 
-증강은 학습 config 와 같은 범위(degrees · translate · scale · hsv_v · blur)에서 여기서 직접
+증강은 학습 config 와 같은 범위(degrees · translate · scale · shear · perspective · hsv_v ·
+blur)에서 여기서 직접
 뽑는다 — Ultralytics 의 학습 증강은 뽑힌 값을 밖으로 내주지 않아 화면에 적을 수 없기 때문.
 입력 16장은 첫 epoch 에 한 번 만들고 고정 → epoch 이 지나며 같은 입력에서 추론이 어떻게
 변하는지 본다. 블러는 학습에서 p(기본 10%)로만 들어가 무작위로는 거의 안 보이므로, 각 행의
@@ -33,6 +34,8 @@ ROWS, AUGS = 4, 3   # 원본 4장 × (원본 + 증강 3) = 4×4
 TILE = 360          # 격자 한 칸(px)
 CONF = 0.25         # 이 점수 미만 예측은 그리지 않음
 PAD = 114           # 증강으로 생긴 빈 곳 채움 (Ultralytics 와 같은 회색)
+MASK_ALPHA = 0.25   # 추론 마스크 채움 불투명도 (Ultralytics 기본 0.5 는 원본을 가림)
+MASK_BGR = (255, 42, 4)   # Ultralytics 0번 클래스 색(파랑)
 
 
 def _val_images(data: dict, n: int) -> list:
@@ -67,19 +70,32 @@ def _augment(img: np.ndarray, polys: list, hyp: dict, rng: random.Random,
              force_blur: bool) -> tuple:
     """학습과 같은 범위의 증강을 한 번 뽑아 적용 → (이미지, 옮긴 폴리곤, 값 문자열)."""
     h, w = img.shape[:2]
+    # Ultralytics RandomPerspective 와 같은 합성: M = T·S·R·P·C (오른쪽부터, 중심 기준)
     deg = rng.uniform(-hyp["degrees"], hyp["degrees"])
     s = rng.uniform(1 - hyp["scale"], 1 + hyp["scale"])
     tx = rng.uniform(-hyp["translate"], hyp["translate"])
     ty = rng.uniform(-hyp["translate"], hyp["translate"])
-    m = cv2.getRotationMatrix2D((w / 2, h / 2), deg, s)
-    m[0, 2] += tx * w
-    m[1, 2] += ty * h
-    out = cv2.warpAffine(img, m, (w, h), borderValue=(PAD, PAD, PAD))
-    polys = [cv2.transform(p[None], m)[0] for p in polys]
+    shx = rng.uniform(-hyp["shear"], hyp["shear"])
+    shy = rng.uniform(-hyp["shear"], hyp["shear"])
+    # perspective 는 학습 해상도(imgsz) px 기준 계수 — 입력이 더 크면 그만큼 줄여야 같은 휨
+    px = rng.uniform(-hyp["perspective"], hyp["perspective"])
+    py = rng.uniform(-hyp["perspective"], hyp["perspective"])
+    k = hyp["imgsz"] / w
+    C = np.array([[1, 0, -w / 2], [0, 1, -h / 2], [0, 0, 1]], np.float64)
+    P = np.array([[1, 0, 0], [0, 1, 0], [px * k, py * k, 1]], np.float64)
+    R = np.vstack([cv2.getRotationMatrix2D((0, 0), deg, s), [0, 0, 1]])
+    S = np.array([[1, math.tan(math.radians(shx)), 0],
+                  [math.tan(math.radians(shy)), 1, 0], [0, 0, 1]], np.float64)
+    T = np.array([[1, 0, (0.5 + tx) * w], [0, 1, (0.5 + ty) * h], [0, 0, 1]], np.float64)
+    m = T @ S @ R @ P @ C
+    out = cv2.warpPerspective(img, m, (w, h), borderValue=(PAD, PAD, PAD))
+    polys = [cv2.perspectiveTransform(p[None], m)[0] for p in polys]
 
     gain = rng.uniform(1 - hyp["hsv_v"], 1 + hyp["hsv_v"])
     out = np.clip(out.astype(np.float32) * gain, 0, 255).astype(np.uint8)
-    text = f"rot {deg:+.1f}  s {s:.2f}  t {tx:+.2f},{ty:+.2f}  v x{gain:.2f}"
+    text = f"rot {deg:+.1f} s {s:.2f} t {tx:+.2f},{ty:+.2f} v x{gain:.2f}"
+    if hyp["shear"] or hyp["perspective"]:
+        text += f"\nsh {shx:+.1f},{shy:+.1f}  p {px * 1e4:+.1f},{py * 1e4:+.1f}e-4"
 
     blur = hyp.get("blur") or {}
     if blur and (force_blur or rng.random() < float(blur.get("p", 0))):
@@ -91,14 +107,29 @@ def _augment(img: np.ndarray, polys: list, hyp: dict, rng: random.Random,
     return out, polys, text
 
 
+def _plot(r) -> np.ndarray:
+    """추론 그림 — 박스·점수는 Ultralytics 그대로, 마스크만 옅게(MASK_ALPHA) + 윤곽선."""
+    plot = r.plot(masks=False)
+    if r.masks is not None and len(r.masks):
+        polys = [p.astype(np.int32) for p in r.masks.xy if len(p) >= 3]
+        fill = plot.copy()
+        cv2.fillPoly(fill, polys, MASK_BGR)
+        plot = cv2.addWeighted(fill, MASK_ALPHA, plot, 1 - MASK_ALPHA, 0)
+        cv2.polylines(plot, polys, True, MASK_BGR, max(1, plot.shape[1] // 600), cv2.LINE_AA)
+    return plot
+
+
 def _tile(plot: np.ndarray, polys: list, text: str) -> np.ndarray:
     for p in polys:   # 정답 — 추론 그림 위에 초록 선
         cv2.polylines(plot, [p.astype(np.int32)], True, (0, 255, 0),
                       max(2, plot.shape[1] // 300), cv2.LINE_AA)
     t = cv2.resize(plot, (TILE, TILE))
-    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
-    cv2.rectangle(t, (0, 0), (min(TILE, tw + 8), th + 8), (0, 0, 0), -1)
-    cv2.putText(t, text, (4, th + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 255), 1, cv2.LINE_AA)
+    lines = text.split("\n")
+    (tw, th), _ = cv2.getTextSize(max(lines, key=len), cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
+    cv2.rectangle(t, (0, 0), (min(TILE, tw + 8), (th + 6) * len(lines) + 2), (0, 0, 0), -1)
+    for i, line in enumerate(lines):
+        cv2.putText(t, line, (4, (th + 6) * i + th + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.38,
+                    (0, 255, 255), 1, cv2.LINE_AA)
     return t
 
 
@@ -109,7 +140,8 @@ def callback(blur: dict | None = None, seed: int = 0):
     def build(trainer) -> None:
         a = trainer.args
         hyp = {"degrees": float(a.degrees), "translate": float(a.translate),
-               "scale": float(a.scale), "hsv_v": float(a.hsv_v),
+               "scale": float(a.scale), "shear": float(a.shear),
+               "perspective": float(a.perspective), "hsv_v": float(a.hsv_v),
                "imgsz": int(a.imgsz), "blur": blur}
         rng = random.Random(seed)
         inputs = []                       # (이미지 BGR, 정답 폴리곤, 칸 위 문자열)
@@ -139,7 +171,7 @@ def callback(blur: dict | None = None, seed: int = 0):
         model = YOLO(str(weights))
         results = model.predict([im for im, _, _ in inputs], imgsz=trainer.args.imgsz,
                                 device=str(trainer.device), conf=CONF, verbose=False)
-        tiles = [_tile(r.plot(), polys, text) for r, (_, polys, text) in zip(results, inputs)]
+        tiles = [_tile(_plot(r), polys, text) for r, (_, polys, text) in zip(results, inputs)]
         cols = AUGS + 1
         rows = math.ceil(len(tiles) / cols)
         sheet = np.zeros((rows * TILE, cols * TILE, 3), np.uint8)
