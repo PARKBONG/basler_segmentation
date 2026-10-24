@@ -443,6 +443,14 @@ public partial class MainWindow : Window
             _overlayHeight = height;
             _hasOverlay = true;
         }
+
+        string info = _infer?.Info ?? "";
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!_inferEnabled) return;
+            InferInfoText.Text = info;
+            InferInfoBox.Visibility = Visibility.Visible;
+        });
     }
 
     private void Inference_Toggled(object sender, RoutedEventArgs e)
@@ -474,6 +482,7 @@ public partial class MainWindow : Window
             _inferEnabled = false;
             // Drop the last annotated crop, or it would stay frozen on screen.
             lock (_overlayLock) _hasOverlay = false;
+            InferInfoBox.Visibility = Visibility.Collapsed;
             StatusText.Text = "Inference OFF.";
         }
     }

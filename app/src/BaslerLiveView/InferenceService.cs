@@ -59,6 +59,10 @@ public sealed class InferenceService : IDisposable
     /// returns (MainWindow swaps it under its overlay lock).</summary>
     public event Action<int, int, byte[]>? FrameProcessed;
 
+    /// <summary>Detection text of the latest processed frame (class · score · wire tip),
+    /// one item per line. Set on the worker thread right before <see cref="FrameProcessed"/>.</summary>
+    public string Info { get; private set; } = "";
+
     /// <summary>Raised for inference failures on the worker thread.</summary>
     public event Action<Exception>? ErrorOccurred;
 
@@ -94,21 +98,21 @@ public sealed class InferenceService : IDisposable
                 "expected a segmentation or OBB model.");
         }
 
-        // Same look as training/render.py: no axis-aligned box, a light mask (64/255 ≈ 25%)
-        // with its outline, and class · score · wire tip written top-left by Annotate().
+        // No axis-aligned box, a faint mask (32/255 ≈ 12%) under a thick outline, and the
+        // wire tip as a red dot (Annotate()); class · score · tip text is shown by MainWindow.
         // An OBB model's rotated box is the prediction itself, so that one is drawn.
         _drawing = new SegmentationDrawingOptions
         {
             DrawBoundingBoxes = false,
             DrawLabels = false,
             DrawConfidenceScore = false,
-            BorderThickness = 2,
+            BorderThickness = 5,
             BoundingBoxOpacity = 128,
             EnableDynamicScaling = true,
             DrawSegmentationPixelMask = true,
-            PixelMaskOpacity = 64,
+            PixelMaskOpacity = 32,
             DrawContour = true,
-            ContourThickness = 2,
+            ContourThickness = 5,
         };
         _obbDrawing = (DetectionDrawingOptions)_drawing;
         _obbDrawing.DrawBoundingBoxes = true;
@@ -215,7 +219,7 @@ public sealed class InferenceService : IDisposable
             found.AddRange(results.Select(r => (r.Label, r.Confidence,
                 WireTip.FromMask(r.BitPackedPixelMask, r.BoundingBox))));
         }
-        Annotate(bitmap, found, origin);
+        Info = Annotate(bitmap, found, origin);
 
         // Read the annotated pixels back out (still Bgra8888) into the output buffer the
         // receiver is not holding (see FrameProcessed).
@@ -229,59 +233,38 @@ public sealed class InferenceService : IDisposable
     }
 
     /// <summary>
-    /// Wire tip as a dot, and per detection top-left:
-    /// "■ wire 0.75" / "crop (498.0, 334.8)" / "full (1082.0, 718.8)" on separate lines —
-    /// crop in crop pixels (only when cropped), full in sensor pixels. Same layout as
-    /// training/infer.py.
+    /// Wire tip as a red dot on the crop, and per detection the lines
+    /// "wire 0.75" / "crop (498.0, 334.8)" / "full (1082.0, 718.8)" — crop in crop pixels
+    /// (only when cropped), full in sensor pixels. The text is not burnt into the crop
+    /// (it came out too small once the crop is letterboxed); MainWindow shows it top-left
+    /// of the view instead.
     /// </summary>
-    private void Annotate(SKBitmap bitmap, List<(LabelModel Label, double Confidence, SKPoint? Tip)> found,
+    private static string Annotate(SKBitmap bitmap, List<(LabelModel Label, double Confidence, SKPoint? Tip)> found,
         (int X, int Y)? origin)
     {
         using var canvas = new SKCanvas(bitmap);
-        float scale = Math.Max(1f, bitmap.Width / 640f);
-        using var font = new SKFont(SKTypeface.Default, 14 * scale);
         using var paint = new SKPaint { IsAntialias = true };
-        float radius = Math.Max(3, bitmap.Width / 200);
-        var palette = _drawing.BoundingBoxHexColors;
+        float radius = Math.Max(6, bitmap.Width / 100f);
 
-        var lines = new List<(string Text, SKColor? Color)>();
+        var lines = new List<string>();
         foreach (var (label, confidence, tip) in found)
         {
-            SKColor color = SKColor.Parse(palette[label.Index % palette.Length]);
-            lines.Add((FormattableString.Invariant($"{label.Name} {confidence:0.00}"), color));
+            lines.Add(FormattableString.Invariant($"{label.Name} {confidence:0.00}"));
             if (tip is SKPoint p)
             {
                 paint.Color = SKColors.White;
-                canvas.DrawCircle(p, radius + 2, paint);
-                paint.Color = color;
+                canvas.DrawCircle(p, radius + Math.Max(2, radius / 3), paint);
+                paint.Color = SKColors.Red;
                 canvas.DrawCircle(p, radius, paint);
                 var (ox, oy) = origin ?? (0, 0);
                 if (origin is not null)
-                    lines.Add((FormattableString.Invariant($"crop ({p.X:0.0}, {p.Y:0.0})"), null));
-                lines.Add((FormattableString.Invariant($"full ({p.X + ox:0.0}, {p.Y + oy:0.0})"), null));
+                    lines.Add(FormattableString.Invariant($"crop ({p.X:0.0}, {p.Y:0.0})"));
+                lines.Add(FormattableString.Invariant($"full ({p.X + ox:0.0}, {p.Y + oy:0.0})"));
             }
         }
         if (lines.Count == 0)
-            lines.Add(("no detection", null));
-
-        font.GetFontMetrics(out var metrics);
-        float lineHeight = font.Size + 6 * scale, swatch = font.Size * 0.8f, pad = 4 * scale;
-        float y = pad;
-        foreach (var (text, color) in lines)
-        {
-            float x = color is null ? pad : pad + swatch + pad;
-            paint.Color = SKColors.Black;
-            canvas.DrawRect(0, y, x + font.MeasureText(text) + pad, lineHeight, paint);
-            float baseline = y + (lineHeight - metrics.Descent - metrics.Ascent) / 2;
-            if (color is SKColor c)
-            {
-                paint.Color = c;
-                canvas.DrawRect(pad, baseline - swatch, swatch, swatch, paint);
-            }
-            paint.Color = color is null ? new SKColor(180, 180, 180) : SKColors.White;
-            canvas.DrawText(text, x, baseline, font, paint);
-            y += lineHeight;
-        }
+            lines.Add("no detection");
+        return string.Join(Environment.NewLine, lines);
     }
 
     public void Dispose()

@@ -90,6 +90,12 @@
                     <TextBlock x:Name="CropRectLabel" Foreground="#FF6B60" FontSize="11" FontWeight="Bold"/>
                 </Border>
             </Canvas>
+            <!-- Inference result (class · score · wire tip), pinned top-left of the view at a
+                 fixed screen size — burnt into the crop it got too small once letterboxed. -->
+            <Border x:Name="InferInfoBox" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8"
+                    Background="#B0000000" Padding="8,4" CornerRadius="3" IsHitTestVisible="False" Visibility="Collapsed">
+                <TextBlock x:Name="InferInfoText" Foreground="White" FontSize="20" FontFamily="Consolas"/>
+            </Border>
         </Grid>
     </DockPanel>
 </Window>
