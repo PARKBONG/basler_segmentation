@@ -211,14 +211,15 @@ public sealed class InferenceService : IDisposable
     private byte[] RunInference(SKBitmap bitmap, (int X, int Y)? origin)
     {
         // Draw() mutates the SKBitmap in place, overlaying masks / rotated boxes.
-        var found = new List<(LabelModel Label, double Confidence, SKPoint? Tip)>();
+        var found = new List<(string Name, double Confidence, SKPoint? Tip)>();
         if (ModelTask == ModelType.ObbDetection)
         {
             var results = _yolo.RunObbDetection(bitmap, confidence: _confidence, iou: 0.7)
                 .OrderByDescending(r => r.Confidence).Take(_maxDetections)
                 .OrderBy(r => r.BoundingBox.MidX).ToList();
             bitmap.Draw(results, _obbDrawing);
-            found.AddRange(results.Select(r => (r.Label, r.Confidence,
+            var xs = results.Select(r => r.BoundingBox.MidX).ToList();
+            found.AddRange(results.Select((r, i) => (NameOf(r.Label, i, xs, bitmap.Width), r.Confidence,
                 (SKPoint?)WireTip.FromObb(r.BoundingBox, r.OrientationAngle))));
         }
         else
@@ -227,7 +228,8 @@ public sealed class InferenceService : IDisposable
                 .OrderByDescending(r => r.Confidence).Take(_maxDetections)
                 .OrderBy(r => r.BoundingBox.MidX).ToList();
             bitmap.Draw(results, _drawing);
-            found.AddRange(results.Select(r => (r.Label, r.Confidence,
+            var xs = results.Select(r => r.BoundingBox.MidX).ToList();
+            found.AddRange(results.Select((r, i) => (NameOf(r.Label, i, xs, bitmap.Width), r.Confidence,
                 WireTip.FromMask(r.BitPackedPixelMask, r.BoundingBox))));
         }
         Info = Annotate(bitmap, found, origin);
@@ -243,14 +245,25 @@ public sealed class InferenceService : IDisposable
         return annotated;
     }
 
+    /// <summary>"wire L" / "wire R" when the rig has two wires (MaxDetections = 2): with both
+    /// found, by order (results are already left to right); with only one, by which half of
+    /// the crop its box center falls in. Any other count keeps the bare class name.</summary>
+    private string NameOf(LabelModel label, int index, IReadOnlyList<int> centersX, int width)
+    {
+        if (_maxDetections != 2)
+            return label.Name;
+        bool left = centersX.Count >= 2 ? index == 0 : centersX[index] < width / 2;
+        return $"{label.Name} {(left ? "L" : "R")}";
+    }
+
     /// <summary>
     /// Wire tip as a red dot on the crop, and per detection the lines
-    /// "wire 0.75" / "crop (498.0, 334.8)" / "full (1082.0, 718.8)" — crop in crop pixels
+    /// "wire L 0.75" / "crop (498.0, 334.8)" / "full (1082.0, 718.8)" — crop in crop pixels
     /// (only when cropped), full in sensor pixels. The text is not burnt into the crop
     /// (it came out too small once the crop is letterboxed); MainWindow shows it top-left
     /// of the view instead.
     /// </summary>
-    private static string Annotate(SKBitmap bitmap, List<(LabelModel Label, double Confidence, SKPoint? Tip)> found,
+    private static string Annotate(SKBitmap bitmap, List<(string Name, double Confidence, SKPoint? Tip)> found,
         (int X, int Y)? origin)
     {
         using var canvas = new SKCanvas(bitmap);
@@ -258,9 +271,9 @@ public sealed class InferenceService : IDisposable
         float radius = Math.Max(6, bitmap.Width / 100f);
 
         var lines = new List<string>();
-        foreach (var (label, confidence, tip) in found)
+        foreach (var (name, confidence, tip) in found)
         {
-            lines.Add(FormattableString.Invariant($"{label.Name} {confidence:0.00}"));
+            lines.Add(FormattableString.Invariant($"{name} {confidence:0.00}"));
             if (tip is SKPoint p)
             {
                 paint.Color = SKColors.White;
