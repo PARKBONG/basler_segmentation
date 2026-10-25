@@ -13,13 +13,11 @@
   runs/<…>/<name>/weights/best.pt 로 적으면 그 name 의 최신 실행 (resolve_weights).
 - seg / obb 모델 모두 — 그림은 render.py (bbox 없이 마스크·OBB 윤곽). 왼쪽 위에 파일명과
   검출마다 클래스·점수·와이어 끝점(OBB 아랫변 중점, 그림에 점) 픽셀 좌표 — 크롭 기준, 크롭했으면
-  원본(풀 프레임) 좌표도. --max-det(점수 높은 순으로 남길 수, = 장치의 와이어 수 — 겹친 중복
-  검출 제거) 기본값은 앱 config.xml 의 <Inference><MaxDetections> (없으면 1).
+  원본(풀 프레임) 좌표도. 장치에 와이어는 하나라 기본 --max-det 1 (겹친 중복 검출 제거).
 """
 from __future__ import annotations
 
 import argparse
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import cv2
@@ -29,7 +27,6 @@ from common import CONFIG_DIR, HERE, IMG_EXTS, resolve, resolve_weights, run_sta
 from preprocess import crop_rect
 
 BATCH = 16
-APP_CONFIG = HERE.parent / "app" / "src" / "BaslerLiveView" / "config" / "config.xml"
 
 
 def find(path_str: str) -> Path:
@@ -46,15 +43,6 @@ def default_crop() -> dict | None:
             if crop.get("enabled") and not (crop.get("auto_crop") or {}).get("enabled"):
                 return crop
     return None
-
-
-def default_max_det() -> int:
-    """앱 config.xml 의 <Inference><MaxDetections> — 앱과 같은 개수. 없거나 잘못되면 1."""
-    try:
-        text = ET.parse(APP_CONFIG).getroot().findtext("Inference/MaxDetections")
-        return max(1, int(text)) if text else 1
-    except (OSError, ET.ParseError, ValueError):
-        return 1
 
 
 def parse_crop(text: str) -> dict | None:
@@ -89,8 +77,7 @@ def main() -> None:
     ap.add_argument("--crop", default="auto", help="'W H CX CY' / auto = preprocess.yaml / none")
     ap.add_argument("--conf", type=float, default=0.25)
     ap.add_argument("--imgsz", type=int, default=640)
-    ap.add_argument("--max-det", type=int, default=default_max_det(),
-                    help="한 장에 남길 최대 검출 수, 점수 높은 순 (= 와이어 수, 기본 앱 config.xml MaxDetections)")
+    ap.add_argument("--max-det", type=int, default=1, help="한 장에 남길 최대 검출 수 (와이어는 하나)")
     ap.add_argument("--fps", type=float, default=5, help="세션 동영상 fps")
     ap.add_argument("--out", default="", help="결과 폴더 (기본 runs/infer/<시각>/)")
     args = ap.parse_args()

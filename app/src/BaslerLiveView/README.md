@@ -49,9 +49,8 @@ YoloDotNet 이 모델의 종류를 파일에서 알아내므로 seg 모델이면
   `src\BaslerLiveView\Models\yolo26s-seg.onnx` / `yolo26s-obb.onnx` 를 덮어써 배포하고,
   이전 것은 `Models\history\` 에 남깁니다 (빌드는 history 를 복사하지 않음).
 - obb 모델로 바꾸려면 `<Model>yolo26s-obb.onnx</Model>`.
-- 프레임당 검출 수는 `<MaxDetections>` (점수 높은 순으로 그 개수만, = 와이어 수 — 기본 1),
-  최소 점수는 `<Confidence>` (기본 0.24). 앱을 다시 켜면 반영되고, `training/infer.py` 의
-  `--max-det` 기본값도 `<MaxDetections>` 를 따릅니다.
+- 프레임당 검출 수는 `<MaxDetections>` (점수 높은 순으로 그 개수만, = 와이어 수 — 지금 2),
+  최소 점수는 `<Confidence>` (기본 0.24). 앱을 다시 켜면 반영됩니다.
 
 ## 학습 데이터 수집 (크롭 + 레코딩)
 
