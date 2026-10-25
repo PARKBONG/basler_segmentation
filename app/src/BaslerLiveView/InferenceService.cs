@@ -34,9 +34,10 @@ public sealed class InferenceService : IDisposable
     private readonly AutoResetEvent _frameSignal = new(false);
     private readonly object _lock = new();
 
-    // The rig has exactly one wire in view. YOLO26 can still emit a second, overlapping
-    // instance of it (IoU below the NMS threshold) — keep only the most confident one.
-    private const int MaxDetections = 1;
+    // Per frame: drop detections scoring below _confidence, then keep the _maxDetections
+    // most confident (config.xml <Inference><MaxDetections> / <Confidence>).
+    private readonly int _maxDetections;
+    private readonly double _confidence;
 
     // Latest submitted frame, owned by this service (copied out of the reused camera buffer).
     private byte[] _pending = Array.Empty<byte>();
@@ -67,11 +68,17 @@ public sealed class InferenceService : IDisposable
     public event Action<Exception>? ErrorOccurred;
 
     /// <param name="modelPath">Path to the ONNX model (segmentation or OBB).</param>
+    /// <param name="maxDetections">Detections kept per frame, highest score first
+    /// (= wires in view).</param>
+    /// <param name="confidence">Minimum detection score, 0–1.</param>
     /// <param name="gpuId">DirectML device id (0 = default GPU, -1 = CPU fallback).</param>
-    public InferenceService(string modelPath, int gpuId = 0)
+    public InferenceService(string modelPath, int maxDetections = 1, double confidence = 0.24, int gpuId = 0)
     {
         if (!File.Exists(modelPath))
             throw new FileNotFoundException($"Model not found: {modelPath}", modelPath);
+
+        _maxDetections = Math.Max(1, maxDetections);
+        _confidence = confidence;
 
         // The execution backend is decided purely by gpuId in the provider:
         // >= 0 uses DirectML on that GPU device, < 0 runs on CPU.
@@ -205,16 +212,16 @@ public sealed class InferenceService : IDisposable
         var found = new List<(LabelModel Label, double Confidence, SKPoint? Tip)>();
         if (ModelTask == ModelType.ObbDetection)
         {
-            var results = _yolo.RunObbDetection(bitmap, confidence: 0.24, iou: 0.7)
-                .OrderByDescending(r => r.Confidence).Take(MaxDetections).ToList();
+            var results = _yolo.RunObbDetection(bitmap, confidence: _confidence, iou: 0.7)
+                .OrderByDescending(r => r.Confidence).Take(_maxDetections).ToList();
             bitmap.Draw(results, _obbDrawing);
             found.AddRange(results.Select(r => (r.Label, r.Confidence,
                 (SKPoint?)WireTip.FromObb(r.BoundingBox, r.OrientationAngle))));
         }
         else
         {
-            var results = _yolo.RunSegmentation(bitmap, confidence: 0.24, pixelConfedence: 0.5, iou: 0.7)
-                .OrderByDescending(r => r.Confidence).Take(MaxDetections).ToList();
+            var results = _yolo.RunSegmentation(bitmap, confidence: _confidence, pixelConfedence: 0.5, iou: 0.7)
+                .OrderByDescending(r => r.Confidence).Take(_maxDetections).ToList();
             bitmap.Draw(results, _drawing);
             found.AddRange(results.Select(r => (r.Label, r.Confidence,
                 WireTip.FromMask(r.BitPackedPixelMask, r.BoundingBox))));

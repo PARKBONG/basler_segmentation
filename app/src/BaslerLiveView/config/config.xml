@@ -18,6 +18,13 @@
          (yolo26s-seg.onnx)이면 마스크, OBB 모델(yolo26s-obb.onnx)이면 회전 박스를 그립니다.
          새 모델 배포 = training/archive.py 로 weights\ 에 보관 → deploy.yaml 에서 고르고 빌드. -->
     <Model>yolo26s-seg.onnx</Model>
+    <!-- 프레임당 남길 검출 수 = 화면에 보이는 와이어 수. 점수(confidence) 높은 순으로
+         이 개수만 남깁니다 — YOLO26 이 같은 와이어를 겹쳐 한 번 더 내는 중복 검출도 이걸로
+         걸러집니다. 와이어 2개인 장치면 2. training/infer.py 의 max-det 기본값도 이 값. -->
+    <MaxDetections>1</MaxDetections>
+    <!-- 최소 점수 0~1. 이보다 낮은 검출은 MaxDetections 로 고르기 전에 버립니다.
+         와이어가 여럿인데 하나가 자꾸 안 잡히면 조금 낮춰 보세요. -->
+    <Confidence>0.24</Confidence>
   </Inference>
   <Crop>
     <!-- 크롭 영역. 화면은 항상 '풀 프레임'을 보여주고, 이 영역은 그 위에 빨간 네모로

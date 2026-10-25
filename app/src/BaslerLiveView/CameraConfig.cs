@@ -21,6 +21,15 @@ public sealed class CameraConfig
     /// <see cref="InferenceService"/>.</summary>
     public string Model { get; set; } = "yolo26s-seg.onnx";
 
+    /// <summary>Detections kept per frame, highest score first — set it to the number of
+    /// wires the rig has in view. YOLO26 can emit an extra, overlapping instance of the same
+    /// wire (IoU below the NMS threshold), and this cap is what drops it.</summary>
+    public int MaxDetections { get; set; } = 1;
+
+    /// <summary>Minimum detection score, 0–1. Detections below it are dropped before
+    /// <see cref="MaxDetections"/> picks the top ones.</summary>
+    public double Confidence { get; set; } = 0.24;
+
     /// <summary>Run segmentation on a <see cref="CropWidth"/>×<see cref="CropHeight"/>
     /// window instead of the whole frame. The live view always shows the full frame
     /// and just outlines this window.</summary>
@@ -97,9 +106,19 @@ public sealed class CameraConfig
                 if (fps is > 0) cfg.FrameRate = fps.Value;
             }
 
-            // <Inference><Model> — older configs used <Segmentation><Model>; accept both.
-            var model = (string?)(root.Element("Inference") ?? root.Element("Segmentation"))?.Element("Model");
-            if (!string.IsNullOrWhiteSpace(model)) cfg.Model = model.Trim();
+            // <Inference> — older configs used <Segmentation>; accept both.
+            var inference = root.Element("Inference") ?? root.Element("Segmentation");
+            if (inference != null)
+            {
+                var model = (string?)inference.Element("Model");
+                if (!string.IsNullOrWhiteSpace(model)) cfg.Model = model.Trim();
+
+                var maxDet = (int?)inference.Element("MaxDetections");
+                if (maxDet is > 0) cfg.MaxDetections = maxDet.Value;
+
+                var conf = (double?)inference.Element("Confidence");
+                if (conf is >= 0 and <= 1) cfg.Confidence = conf.Value;
+            }
 
             var crop = root.Element("Crop");
             if (crop != null)

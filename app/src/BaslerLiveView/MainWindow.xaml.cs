@@ -462,7 +462,7 @@ public partial class MainWindow : Window
                 if (_infer == null)
                 {
                     // Model load + DirectML session init blocks briefly (~1-2s).
-                    _infer = new InferenceService(_modelPath);
+                    _infer = new InferenceService(_modelPath, _config.MaxDetections, _config.Confidence);
                     _infer.FrameProcessed += OnInferredFrame;
                     _infer.ErrorOccurred += ex =>
                         Dispatcher.BeginInvoke(() => StatusText.Text = "Inference error: " + ex.Message);
