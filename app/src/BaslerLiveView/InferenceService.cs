@@ -35,7 +35,9 @@ public sealed class InferenceService : IDisposable
     private readonly object _lock = new();
 
     // Per frame: drop detections scoring below _confidence, then keep the _maxDetections
-    // most confident (config.xml <Inference><MaxDetections> / <Confidence>).
+    // most confident (config.xml <Inference><MaxDetections> / <Confidence>). The kept ones
+    // are listed left to right (box center x), so with several wires each keeps its slot
+    // in the info text instead of swapping whenever their scores cross.
     private readonly int _maxDetections;
     private readonly double _confidence;
 
@@ -213,7 +215,8 @@ public sealed class InferenceService : IDisposable
         if (ModelTask == ModelType.ObbDetection)
         {
             var results = _yolo.RunObbDetection(bitmap, confidence: _confidence, iou: 0.7)
-                .OrderByDescending(r => r.Confidence).Take(_maxDetections).ToList();
+                .OrderByDescending(r => r.Confidence).Take(_maxDetections)
+                .OrderBy(r => r.BoundingBox.MidX).ToList();
             bitmap.Draw(results, _obbDrawing);
             found.AddRange(results.Select(r => (r.Label, r.Confidence,
                 (SKPoint?)WireTip.FromObb(r.BoundingBox, r.OrientationAngle))));
@@ -221,7 +224,8 @@ public sealed class InferenceService : IDisposable
         else
         {
             var results = _yolo.RunSegmentation(bitmap, confidence: _confidence, pixelConfedence: 0.5, iou: 0.7)
-                .OrderByDescending(r => r.Confidence).Take(_maxDetections).ToList();
+                .OrderByDescending(r => r.Confidence).Take(_maxDetections)
+                .OrderBy(r => r.BoundingBox.MidX).ToList();
             bitmap.Draw(results, _drawing);
             found.AddRange(results.Select(r => (r.Label, r.Confidence,
                 WireTip.FromMask(r.BitPackedPixelMask, r.BoundingBox))));
